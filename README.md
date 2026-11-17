@@ -125,9 +125,11 @@ It answers you in Telegram and shows the message it wants to send to each sessio
 
 ### Opening a new session
 
-`/new-session @project what it should do` opens a new Claude Code session in that project, with your text as its first prompt, and its answer comes back to Telegram. With Orca it works for every project Orca knows, even one with no session open. Without Orca it opens a tmux window when the bridge runs inside tmux.
+`/new-session @project what it should do` opens a new Claude Code session in that project, with your text as its first prompt, and its answer comes back to Telegram.
 
-`/new-session @general …` opens it in your home folder, or in `general_dir` from the config. With Orca, that folder has to be a project in Orca.
+- **With [Orca](https://github.com/stablyai/orca):** it opens as an Orca agent tab, in any project Orca knows, even one with no session open. `/new-session @general …` opens it in Orca's floating terminal.
+- **Inside tmux:** a new tmux window.
+- **Otherwise:** a new terminal window running `claude` (Terminal on macOS, a new console on Windows, `x-terminal-emulator` on Linux). `@general` opens it in your home folder, or in `general_dir` from the config. To use another terminal app, set `CLAUDE_TELEGRAM_OPEN_TERMINAL` to a program that takes a folder and a prompt.
 
 ### Commands to a session
 
@@ -179,7 +181,7 @@ Everything lives in `~/.claude-telegram/config.json` (set `CLAUDE_TELEGRAM_HOME`
 | `idle_away_min` | Minutes without keyboard or mouse input before you count as away. `0` turns idle detection off. |
 | `away_after_min` | Only used where idle detection isn't available or is off: minutes without typing a prompt before you count as away. Set both to `0` and only `/away` makes you away. |
 | `notify_finished` | Also message you when a turn ends without a question. |
-| `general_dir` | Folder where `/new-session @general` opens sessions. Default: your home folder. |
+| `general_dir` | Folder where `/new-session @general` opens sessions. Default: Orca's floating terminal with Orca, your home folder without it. |
 | `quick_replies` | The buttons under text questions. Each sends its own text as your answer, so write them in the language you use with Claude. |
 
 The environment variables `CLAUDE_TELEGRAM_TOKEN` and `CLAUDE_TELEGRAM_CHAT_ID` override the file. `CLAUDE_TELEGRAM_DISABLE=1` turns the hooks off for one session.

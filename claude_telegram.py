@@ -503,6 +503,31 @@ def orca_cmd(*args):
 NEW_SESSION = re.compile(r"/(?:new-session|new_session|newsession|nueva-sesion|nueva_sesion)(?:@\S+)?\s+@(\S+)\s+(.+)", re.S | re.I)
 
 
+def open_terminal(root, prompt):
+    """A plain terminal window running `claude PROMPT` in root. False if this computer has no way we know."""
+    custom = os.environ.get("CLAUDE_TELEGRAM_OPEN_TERMINAL")
+    if custom:
+        subprocess.Popen(([sys.executable] if custom.endswith(".py") else []) + [custom, root, prompt])
+        return True
+    if sys.platform == "darwin":
+        import shlex
+        script = f"cd {shlex.quote(root)} && claude {shlex.quote(prompt)}"
+        osa = 'tell application "Terminal"\nactivate\ndo script ' + json.dumps(script, ensure_ascii=False) + "\nend tell"
+        subprocess.run(["osascript", "-e", osa], timeout=30, check=True)
+        return True
+    if os.name == "nt":
+        exe = shutil.which("claude")
+        if not exe:
+            return False
+        subprocess.Popen([exe, prompt], cwd=root, creationflags=0x00000010)  # CREATE_NEW_CONSOLE
+        return True
+    term = shutil.which("x-terminal-emulator")
+    if term and os.environ.get("DISPLAY"):
+        subprocess.Popen([term, "-e", "claude", prompt], cwd=root)
+        return True
+    return False
+
+
 def new_session(cfg, text):
     """/new-session @project TEXT: open a new Claude Code session in that project, with TEXT as its first prompt.
     @general opens it in general_dir (your home folder by default)."""
@@ -513,6 +538,7 @@ def new_session(cfg, text):
     name, prompt = m.group(1).lower(), m.group(2).strip()
     sessions = open_sessions()
     in_orca = any((s.get("term") or {}).get("orca") for s in sessions.values())  # its sessions run inside Orca
+    floating = name == "general" and in_orca and not cfg.get("general_dir")  # Orca's floating terminal
     if name == "general":
         roots = [os.path.expanduser(cfg.get("general_dir") or "~")]
     else:
@@ -532,9 +558,13 @@ def new_session(cfg, text):
         send(cfg, f"Which project? “@{name}” matches {found}." if roots else f"No project I know matches “@{name}”. /projects lists them.")
         return
     root = roots[0]
+    # Before launching: Orca can deliver the first prompt before the launch call returns.
+    spawned = STATE / "spawned" / hashlib.sha1(prompt.encode()).hexdigest()
+    write(spawned, root)
     try:
         if in_orca:
-            r = subprocess.run(orca_cmd("agent", "launch", "--agent", "claude", "--worktree", f"path:{root}",
+            where = "id:global-floating-terminal" if floating else f"path:{root}"
+            r = subprocess.run(orca_cmd("agent", "launch", "--agent", "claude", "--worktree", where,
                                         "--surface", "terminal", "--prompt", prompt, "--json"),
                                capture_output=True, text=True, timeout=60)
             try:
@@ -549,14 +579,16 @@ def new_session(cfg, text):
                 raise RuntimeError(err)
         elif os.environ.get("TMUX"):
             subprocess.run(["tmux", "new-window", "-d", "-c", root, "claude", prompt], timeout=20, check=True)
-        else:
-            send(cfg, "I can only open new sessions with Orca or tmux.")
+        elif not open_terminal(root, prompt):
+            rm(spawned)
+            send(cfg, "I couldn't find a way to open a terminal window here (Orca, tmux, Terminal, a console or "
+                      "x-terminal-emulator). Set CLAUDE_TELEGRAM_OPEN_TERMINAL to a program that takes a folder and a prompt.")
             return
     except Exception as e:
+        rm(spawned)
         log(f"new session failed: {e}")
         send(cfg, f"Couldn't open a session in {Path(root).name}: {clip(str(e), 300)}.")
         return
-    write(STATE / "spawned" / hashlib.sha1(prompt.encode()).hexdigest(), root)
     send(cfg, f"→ new session in {Path(root).name}: starting with “{clip(prompt, 200)}”. Its answer will come here.")
 
 

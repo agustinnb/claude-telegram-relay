@@ -92,6 +92,8 @@ class Base(unittest.TestCase):
         self.tg = FakeTelegram()
         self.home = Path(tempfile.mkdtemp())
         (self.home / "config.json").write_text(json.dumps({"token": "T", "chat_id": CHAT, "owner_id": CHAT}))
+        (self.home / "open_terminal.py").write_text(
+            "import json, sys, os\nopen(os.path.join(os.path.dirname(__file__), 'opened.log'), 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n")
         router = self.home / "router.py"
         router.write_text("import json, os\n"
                           "good = os.environ.get('FAKE_LOGGED_IN_CONFIG')\n"  # a Claude login that only works in one profile
@@ -103,6 +105,8 @@ class Base(unittest.TestCase):
         self.env = {**clean, "CLAUDE_TELEGRAM_HOME": str(self.home), "CLAUDE_TELEGRAM_API": self.tg.url,
                     "CLAUDE_TELEGRAM_TICK": "0.1", "CLAUDE_TELEGRAM_LONG_POLL": "0", "CLAUDE_TELEGRAM_POLLER_IDLE": "5",
                     "CLAUDE_TELEGRAM_CLAUDE": str(router),
+                    # never open a real terminal window from a test
+                    "CLAUDE_TELEGRAM_OPEN_TERMINAL": str(self.home / "open_terminal.py"),
                     "CLAUDE_TELEGRAM_IDLE_SECONDS": "0"}  # tests must not depend on whether someone is using this machine
         self.procs = []
         # A stand-in for the claude process: hooks watch it, and killing it in tearDown ends every waiter they left.
@@ -504,11 +508,23 @@ class Commands(Base):
         self.wait_for(lambda: self.tg.find("README written."))
         self.assertIn("my-shop", self.tg.find("README written.")[0]["text"])
 
-    def test_new_session_without_orca_or_tmux_explains(self):
+    def test_new_session_without_orca_opens_a_terminal_window(self):
         p = self.hook("stop", stop(BASE, "Done."), background=True)
         self.wait_for(self.listening("s1"))
         self.tg.push(msg("/new-session @shop write the README"))
-        self.wait_for(lambda: self.tg.find("Orca or tmux"))
+        opened = self.home / "opened.log"
+        self.wait_for(opened.exists)
+        self.assertEqual(json.loads(opened.read_text().splitlines()[0]), ["/work/my-shop", "write the README"])
+        self.wait_for(lambda: self.tg.find("new session"))
+
+    def test_new_session_general_goes_to_orcas_floating_terminal(self):
+        log = self.fake_orca()
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push(msg("/new-session @general what's on my plate today?"))
+        self.wait_for(lambda: log.exists() and '"launch"' in log.read_text())
+        launch = [json.loads(l) for l in log.read_text().splitlines() if '"launch"' in l][0]
+        self.assertIn("id:global-floating-terminal", launch)
 
     def test_slash_command_is_typed_into_an_orca_terminal(self):
         log = self.fake_orca()
