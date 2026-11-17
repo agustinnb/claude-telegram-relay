@@ -590,6 +590,27 @@ class Dialogs(Base):
         code, out, _ = self.finish(p)
         self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "deny", "message": "no, keep build"})
 
+    def test_loop_permission_goes_to_telegram_even_when_you_are_at_the_computer(self):
+        p = self.hook("stop", stop(BASE, "Cycle done.", crons=[{"id": "c1", "cron": "*/30 * * * *", "prompt": "run a cycle"}]), background=True)
+        self.wait_for(self.listening("s1"))
+        # you're at the computer, but nobody watches a loop: it would sit on this prompt for hours
+        q = self.hook("permission", {**BASE, "tool_name": "Bash", "tool_input": {"command": "rm old.log"}}, background=True)
+        self.wait_for(lambda: self.tg.find("rm old.log"))
+        self.hook("prompt", {"session_id": "other", "cwd": "/x", "prompt": "typing elsewhere"})
+        time.sleep(1)
+        self.assertIsNone(q.poll())  # being at the computer doesn't move it back to a terminal nobody is looking at
+        self.tg.push(tap(self.tg.find("rm old.log")[0]["_mid"], 0))
+        code, out, _ = self.finish(q)
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
+
+    def test_subagent_permission_reaches_telegram(self):
+        self.go_away()  # a subagent's prompt blocks its parent session just the same
+        q = self.hook("permission", {**BASE, "agent_id": "sub1", "tool_name": "Bash", "tool_input": {"command": "rm tmp.txt"}}, background=True)
+        self.wait_for(lambda: self.tg.find("rm tmp.txt"))
+        self.tg.push(tap(self.tg.find("rm tmp.txt")[0]["_mid"], 0))
+        code, out, _ = self.finish(q)
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
+
     def test_away_command_from_telegram(self):
         self.hook("stop", stop(OTHER, "Done."), background=True)  # a listener keeps the poller running
         self.wait_for(self.listening("s2"))

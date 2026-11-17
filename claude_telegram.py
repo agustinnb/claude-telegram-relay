@@ -1040,12 +1040,19 @@ def take(mid):
     return answer
 
 
+def in_loop(d):
+    """A session running a loop: nobody is watching its terminal, so its dialogs go to Telegram even when you're
+    at the computer, and stay there until you answer."""
+    return bool(session(d.get("session_id", "")).get("crons"))
+
+
 def wait_answers(cfg, d, questions):
     """questions: list of (text, labels). Returns the answers, or None if you came back to the computer."""
+    loop = in_loop(d)
     s = remember(d.get("session_id", ""), d)
     sent = []
     for i, (q_text, labels) in enumerate(questions):
-        text = (header(s, "Question") + "\n\n" if i == 0 else "") + q_text
+        text = (header(s, "Loop paused · Question" if loop else "Question") + "\n\n" if i == 0 else "") + q_text
         mid = send(cfg, text, labels)
         if mid is None:
             return None
@@ -1054,7 +1061,7 @@ def wait_answers(cfg, d, questions):
     ensure_poller()
     owner = claude_pid()
     while any(x[3] is None for x in sent):
-        if not away(cfg) or not alive(owner):  # back at the computer, or the session was closed
+        if (not loop and not away(cfg)) or not alive(owner):  # back at the computer, or the session was closed
             for mid, text, _, _ in sent:
                 rm(STATE / "pending" / f"{mid}.json")
                 edit(cfg, mid, text + "\n\n— Moved to the terminal.")
@@ -1070,8 +1077,8 @@ def wait_answers(cfg, d, questions):
 
 
 def hook_ask(d, cfg):
-    """PreToolUse AskUserQuestion: when you're away, answer it from Telegram; otherwise the normal dialog."""
-    if not away(cfg) or project_of(d) in muted_names():
+    """PreToolUse AskUserQuestion: when you're away (or it's a loop), answer it from Telegram; otherwise the normal dialog."""
+    if not (away(cfg) or in_loop(d)) or project_of(d) in muted_names():
         return 0
     ti = d.get("tool_input") or {}
     qs = ti.get("questions") or []
@@ -1094,8 +1101,8 @@ def hook_ask(d, cfg):
 
 
 def hook_permission(d, cfg):
-    """PermissionRequest: when you're away, allow or deny from Telegram; otherwise the normal dialog."""
-    if not away(cfg) or project_of(d) in muted_names():
+    """PermissionRequest: when you're away (or it's a loop), allow or deny from Telegram; otherwise the normal dialog."""
+    if not (away(cfg) or in_loop(d)) or project_of(d) in muted_names():
         return 0
     tool = d.get("tool_name", "?")
     detail = json.dumps(d.get("tool_input") or {}, ensure_ascii=False)
@@ -1117,8 +1124,8 @@ def run_hook(event):
         d = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
     except ValueError:
         return 0
-    if d.get("agent_id"):
-        return 0  # subagents report to their parent, not to you
+    if d.get("agent_id") and event not in ("ask", "permission"):
+        return 0  # subagents report to their parent, not to you; but their dialogs block the session just the same
     if event == "prompt":
         return hook_prompt(d)
     if event == "end":
