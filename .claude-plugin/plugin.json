@@ -1,0 +1,19 @@
+{
+  "name": "telegram-relay",
+  "displayName": "Telegram relay",
+  "version": "0.1.0",
+  "description": "Telegram alerts when a Claude Code session is waiting on you (questions, permissions, errors, loops), and your replies sent back to it.",
+  "author": {
+    "name": "claude-telegram-relay contributors"
+  },
+  "license": "GPL-3.0-or-later",
+  "keywords": [
+    "telegram",
+    "notifications",
+    "hooks",
+    "remote",
+    "multi-session"
+  ],
+  "homepage": "https://github.com/agustinnb/claude-telegram-relay",
+  "repository": "https://github.com/agustinnb/claude-telegram-relay"
+}

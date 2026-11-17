@@ -1,0 +1,14 @@
+{
+  "name": "telegram-relay",
+  "owner": {
+    "name": "claude-telegram-relay contributors"
+  },
+  "description": "Telegram alerts and replies for Claude Code sessions that are waiting on you.",
+  "plugins": [
+    {
+      "name": "telegram-relay",
+      "source": "./",
+      "description": "Telegram alerts when a Claude Code session is waiting on you, and your replies sent back to it."
+    }
+  ]
+}
