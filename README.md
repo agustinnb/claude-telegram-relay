@@ -121,7 +121,7 @@ You're always told which session got your message. If that session is busy, the 
 - something for several sessions: `@general tell the api and the web sessions the staging database moved to db2`, and it writes each one its message
 - something for one project when you don't remember its name: `@general ask the one doing the invoices whether the export is done`
 
-It answers you in Telegram and lists exactly what it sent to which session. Reply to its answer to keep talking to it. It has no tools and never sends `/commands`. It runs `claude -p --model sonnet`.
+It answers you in Telegram and shows the message it wants to send to each session, with *Send* / *Cancel* buttons: nothing is sent until you tap *Send*. That's on purpose: what the sessions wrote is part of what the orchestrator reads, and text a session picked up (a web page, a file) could try to steer it. Reply to its answer to keep talking to it. It has no tools and never sends `/commands`. It runs `claude -p --model sonnet`.
 
 ### Commands to a session
 

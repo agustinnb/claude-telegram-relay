@@ -674,6 +674,7 @@ def general(cfg, text, context=""):
         send(cfg, "The general orchestrator couldn't run `claude -p` (details in log.txt).")
         return
     lines = [f"General · {clip(answer.get('reply') or '', 3000)}"]
+    relay = []
     for item in answer.get("send") or []:
         sid, message = item.get("session"), (item.get("message") or "").strip()
         if sid not in sessions or not message:
@@ -682,12 +683,29 @@ def general(cfg, text, context=""):
         if message.startswith("/"):  # commands only go to a session you named yourself
             lines.append(f"\n✗ {project}: not sent, commands need “@{project} {message.split()[0]}”.")
             continue
-        deliver(cfg, sid, message, quiet=True,
-                body=f"Message from the user via Telegram, relayed by the general orchestrator: {message}")
+        relay.append({"sid": sid, "message": message})
         lines.append(f"\n→ {project}:{safe_id(sid)[:4]}: {clip(message, 300)}")
-    mid = send(cfg, "\n".join(lines))
+    if relay:
+        # What sessions wrote is in its prompt and could have steered it: you confirm before anything is sent.
+        lines.append("\nSend these?")
+    mid = send(cfg, "\n".join(lines), ["Send", "Cancel"] if relay else None)
     if mid:
         write(STATE / "msgs" / str(mid), "general")  # replying to it keeps talking to the orchestrator
+        if relay:
+            save(STATE / "routes" / f"{mid}.json", {"relay": relay, "text": "\n".join(lines)})
+
+
+def confirm_relay(cfg, mid, r, choice):
+    rm(STATE / "routes" / f"{mid}.json")
+    if choice != 0:
+        edit(cfg, mid, r["text"] + "\n\n— Cancelled, nothing sent.")
+        return
+    sessions = open_sessions()
+    for item in r["relay"]:
+        if item["sid"] in sessions:
+            deliver(cfg, item["sid"], item["message"], quiet=True,
+                    body=f"Message the general orchestrator wrote from the user's Telegram request (the user approved sending it): {item['message']}")
+    edit(cfg, mid, r["text"] + "\n\n— Sent.")
 
 
 def dispatch(cfg, update):
@@ -747,7 +765,10 @@ def on_answer(cfg, mid, answer, quoted=""):
         save(STATE / "inbox" / f"{mid}.json", answer)
         return
     r = load(STATE / "routes" / f"{mid}.json")
-    if r:
+    if r and r.get("relay") and "choice" in answer:
+        confirm_relay(cfg, mid, r, answer["choice"])
+        return
+    if r and not r.get("relay"):
         if "choice" in answer and 0 <= answer["choice"] < len(r["sids"]):
             rm(STATE / "routes" / f"{mid}.json")
             edit(cfg, mid, f"“{clip(r['text'], 300)}”")

@@ -387,12 +387,16 @@ class Messages(Base):
         self.wait_for(self.listening("s1"))
         self.wait_for(self.listening("s2"))
         self.tg.push(msg("@general how is everything? ask the blog for a status"))
+        self.wait_for(lambda: self.tg.find("Both are idle"))
+        proposal = self.tg.find("Both are idle")[0]
+        time.sleep(1)
+        self.assertIsNone(p2.poll())  # nothing is sent before you confirm: session text could have steered the orchestrator
+        self.tg.push(tap(proposal["_mid"], 0))
         code, _, err = self.finish(p2)
         self.assertEqual(code, 2)
         self.assertIn("send me your status", err)
         self.assertIn("general orchestrator", err)  # the session knows who relayed it
-        self.wait_for(lambda: self.tg.find("Both are idle"))
-        answer = self.tg.find("Both are idle")[0]
+        answer = proposal
         self.assertIn("blog", answer["text"])  # says where it sent what
         self.assertIsNone(p1.poll())
         # replying to its answer keeps talking to the orchestrator, not to a session
