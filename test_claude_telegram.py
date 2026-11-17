@@ -379,6 +379,38 @@ class Messages(Base):
         self.assertIn("what are you on?", err)
         self.assertIsNone(pa.poll())
 
+    def test_general_answers_and_relays_what_you_ask_it_to(self):
+        self.env["FAKE_ROUTE"] = json.dumps({"reply": "Both are idle; I asked the blog for its status.",
+                                             "send": [{"session": "s2", "message": "send me your status"}]})
+        p1 = self.hook("stop", stop(BASE, "Done."), background=True)
+        p2 = self.hook("stop", stop(OTHER, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.wait_for(self.listening("s2"))
+        self.tg.push(msg("@general how is everything? ask the blog for a status"))
+        code, _, err = self.finish(p2)
+        self.assertEqual(code, 2)
+        self.assertIn("send me your status", err)
+        self.assertIn("general orchestrator", err)  # the session knows who relayed it
+        self.wait_for(lambda: self.tg.find("Both are idle"))
+        answer = self.tg.find("Both are idle")[0]
+        self.assertIn("blog", answer["text"])  # says where it sent what
+        self.assertIsNone(p1.poll())
+        # replying to its answer keeps talking to the orchestrator, not to a session
+        # (the fake orchestrator gives the same answer again: the running poller keeps its environment)
+        self.tg.push(msg("anything else?", reply_to=answer["_mid"], reply_text=answer["text"]))
+        self.wait_for(lambda: len(self.tg.find("General ·")) == 2)
+        self.assertFalse(self.tg.find("don't know which session"))
+        self.assertIsNone(p1.poll())
+
+    def test_general_never_relays_commands(self):
+        self.env["FAKE_ROUTE"] = json.dumps({"reply": "Done.", "send": [{"session": "s1", "message": "/clear"}]})
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push(msg("@general clear my-shop"))
+        self.wait_for(lambda: self.tg.find("not sent"))
+        time.sleep(1)
+        self.assertIsNone(p.poll())
+
     def test_router_picks_the_session(self):
         self.env["FAKE_ROUTE"] = json.dumps({"session": "s2"})
         p1 = self.hook("stop", stop(BASE, "Done."), background=True)

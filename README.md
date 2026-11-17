@@ -113,6 +113,16 @@ Loop notices are sent right away, whether you're away or not. Muted projects get
 
 You're always told which session got your message. If that session is busy, the message waits until it finishes its current step. The session's answer comes back to Telegram as a reply.
 
+### The general orchestrator
+
+`@general` talks to an orchestrator that sees every open session on that computer (project, what you last asked it, its last answer, whether it's busy). Use it when your message isn't for one session:
+
+- a question about all of them: `@general what is each session doing?`, `@general is anything stuck?`
+- something for several sessions: `@general tell the api and the web sessions the staging database moved to db2`, and it writes each one its message
+- something for one project when you don't remember its name: `@general ask the one doing the invoices whether the export is done`
+
+It answers you in Telegram and lists exactly what it sent to which session. Reply to its answer to keep talking to it. It has no tools and never sends `/commands`. It runs `claude -p --model sonnet`.
+
 ### Commands to a session
 
 `@my-app /compact`, or any single-line `/command`, is typed into that session's terminal. This only works when the session is idle and runs inside Orca or tmux. Commands only go to a session you named (or whose message you replied to), never to one the router guessed: a `/clear` in the wrong session would wipe its context. Only lines that start with `/` are typed, so shell lines like `!rm …` can't be run from Telegram.
@@ -121,6 +131,7 @@ You're always told which session got your message. If that session is busy, the 
 
 | Command | |
 |---|---|
+| `@general …` | Ask the orchestrator that sees every session, or have it pass messages on |
 | `/projects` | Open projects with the `@name` to type, what each session is doing and its last reply |
 | `/sessions @project` | The sessions of one project, each with the `@project:tag` that talks to it |
 | `/status` | Whether you're away, open sessions (❓ waiting on you · idle … working), what's muted |
