@@ -523,7 +523,8 @@ def new_session(cfg, text):
                 known += [w["path"] for w in out["result"]["worktrees"] if not w.get("isArchived")]
             except Exception as e:
                 log(f"orca worktree list failed: {e}")
-        known = list(dict.fromkeys(r for r in known if r))
+        # one folder can come as C:\\x and C:/x (Windows), or with a trailing slash
+        known = list({os.path.normcase(os.path.normpath(r)): os.path.normpath(r) for r in known if r}.values())
         exact = [r for r in known if Path(r).name.lower() == name]
         roots = exact or [r for r in known if name in Path(r).name.lower()]
     if len(roots) != 1:
