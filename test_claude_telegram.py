@@ -641,6 +641,36 @@ class Dialogs(Base):
         code, out, _ = self.finish(q)
         self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
 
+    def test_permission_goes_to_telegram_in_any_session_even_when_present(self):
+        q = self.hook("permission", {**BASE, "tool_name": "Bash", "tool_input": {"command": "rm notes.md"}}, background=True)
+        self.wait_for(lambda: self.tg.find("rm notes.md"))
+        self.hook("prompt", {"session_id": "other", "cwd": "/x", "prompt": "typing elsewhere"})
+        time.sleep(1)
+        self.assertIsNone(q.poll())
+        self.tg.push(tap(self.tg.find("rm notes.md")[0]["_mid"], 1))
+        code, out, _ = self.finish(q)
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"]["behavior"], "deny")
+
+    def test_permission_answered_in_the_terminal_is_dismissed_in_telegram(self):
+        # Claude Code shows the dialog in the terminal while the hook waits; answering there runs the tool
+        transcript = self.home / "t.jsonl"
+        call = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "rm notes.md"}}]}}
+        transcript.write_text(json.dumps(call) + "\n")
+        q = self.hook("permission", {**BASE, "transcript_path": str(transcript), "tool_name": "Bash",
+                                     "tool_input": {"command": "rm notes.md"}}, background=True)
+        self.wait_for(lambda: self.tg.find("rm notes.md"))
+        with open(transcript, "a") as f:
+            f.write(json.dumps({"type": "user", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]}}) + "\n")
+        self.assertEqual(self.finish(q)[:2], (0, ""))  # no decision: the terminal already made it
+        self.wait_for(lambda: any("Answered in the terminal" in e["text"] for e in self.tg.edits()))
+
+    def test_permissions_can_stay_in_the_terminal_when_present(self):
+        cfg = json.loads((self.home / "config.json").read_text())
+        (self.home / "config.json").write_text(json.dumps({**cfg, "permissions_always": False}))
+        self.assertEqual(self.hook("permission", {**BASE, "tool_name": "Bash", "tool_input": {"command": "ls"}})[:2], (0, ""))
+
     def test_subagent_permission_reaches_telegram(self):
         self.go_away()  # a subagent's prompt blocks its parent session just the same
         q = self.hook("permission", {**BASE, "agent_id": "sub1", "tool_name": "Bash", "tool_input": {"command": "rm tmp.txt"}}, background=True)

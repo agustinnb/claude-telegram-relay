@@ -88,7 +88,9 @@ Plugin: `/plugin uninstall telegram-relay`. By hand: `python3 claude_telegram.py
 
 ### When does it message you?
 
-Questions, permission prompts and errors reach Telegram only when you're **away**, so you aren't pinged about things you're already looking at. You count as away when:
+**Permission prompts** always reach Telegram, from any session, even when you're at the computer: with many sessions open it's easy to miss the one that is waiting. The prompt shows in the terminal too, and whichever you answer first wins: answer in the terminal and the Telegram message is marked *Answered in the terminal*. Set `permissions_always` to `false` to treat them like questions.
+
+Questions and errors reach Telegram only when you're **away**, so you aren't pinged about things you're already looking at. You count as away when:
 
 - you sent `/away` to the bot (`/back` undoes it), or
 - the computer had no keyboard or mouse input for 3 minutes (`idle_away_min`). This works on macOS, on Windows, and on Linux with X11 when `xprintidle` is installed. Where it can't tell, it falls back to "no prompt typed in any session for 10 minutes" (`away_after_min`).
@@ -153,7 +155,7 @@ Spanish aliases work too: `/proyectos`, `/sesiones`, `/estado`, `/lejos`, `/vuel
 
 ### Loops
 
-Nobody watches a loop's terminal, so in a session that runs a loop, permission prompts and `AskUserQuestion` dialogs always go to Telegram, even when you're at the computer, and wait there for your answer. This also covers the prompts Claude Code still shows in *bypass permissions* mode, and prompts raised by subagents. The message starts with *Loop paused*.
+Nobody watches a loop's terminal, so in a session that runs a loop, `AskUserQuestion` dialogs (like permission prompts) always go to Telegram, even when you're at the computer, and wait there for your answer. This also covers the prompts Claude Code still shows in *bypass permissions* mode, and prompts raised by subagents. The message starts with *Loop paused*.
 
 ### Several computers
 
@@ -172,6 +174,7 @@ Everything lives in `~/.claude-telegram/config.json` (set `CLAUDE_TELEGRAM_HOME`
   "away_after_min": 10,
   "notify_finished": false,
   "general_dir": "~",
+  "permissions_always": true,
   "quick_replies": ["Yes", "No", "Do what you think is best"]
 }
 ```
@@ -182,6 +185,7 @@ Everything lives in `~/.claude-telegram/config.json` (set `CLAUDE_TELEGRAM_HOME`
 | `away_after_min` | Only used where idle detection isn't available or is off: minutes without typing a prompt before you count as away. Set both to `0` and only `/away` makes you away. |
 | `notify_finished` | Also message you when a turn ends without a question. |
 | `general_dir` | Folder where `/new-session @general` opens sessions. Default: Orca's floating terminal with Orca, your home folder without it. |
+| `permissions_always` | Send every permission prompt to Telegram, even when you're at the computer (default `true`). With `false`, only when you're away or in a loop session. |
 | `quick_replies` | The buttons under text questions. Each sends its own text as your answer, so write them in the language you use with Claude. |
 
 The environment variables `CLAUDE_TELEGRAM_TOKEN` and `CLAUDE_TELEGRAM_CHAT_ID` override the file. `CLAUDE_TELEGRAM_DISABLE=1` turns the hooks off for one session.

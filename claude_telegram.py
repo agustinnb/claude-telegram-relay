@@ -1150,9 +1150,50 @@ def in_loop(d):
     return bool(session(d.get("session_id", "")).get("crons"))
 
 
-def wait_answers(cfg, d, questions):
-    """questions: list of (text, labels). Returns the answers, or None if you came back to the computer."""
+def pending_tool(d):
+    """The transcript position and tool_use id of the call this permission prompt is about, so we can see when
+    it gets answered in the terminal (Claude Code shows the dialog there while this hook waits)."""
+    path = d.get("transcript_path") or ""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            f.seek(max(0, size - 2_000_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines):
+        if '"tool_use"' not in line:
+            continue
+        try:
+            content = (json.loads(line).get("message") or {}).get("content") or []
+        except ValueError:
+            continue
+        for c in content if isinstance(content, list) else []:
+            if c.get("type") == "tool_use" and c.get("name") == d.get("tool_name") and c.get("input") == d.get("tool_input"):
+                return {"path": path, "offset": size, "id": c["id"]}
+    return None
+
+
+def answered_in_terminal(tool):
+    """True once the transcript has the result of that tool call."""
+    if not tool:
+        return False
+    try:
+        with open(tool["path"], "rb") as f:
+            f.seek(tool["offset"])
+            new = f.read()
+    except OSError:
+        return False
+    complete = new[:new.rfind(b"\n") + 1]  # whole lines only; a half-written one is read next time
+    tool["offset"] += len(complete)
+    return f'"tool_use_id":"{tool["id"]}"' in complete.decode("utf-8", "replace").replace(" ", "")
+
+
+def wait_answers(cfg, d, questions, stay=False):
+    """questions: list of (text, labels). Returns the answers, or None if you came back to the computer
+    (unless stay: then it waits for Telegram)."""
     loop = in_loop(d)
+    hold = loop or stay  # don't hand it back to the terminal when you're at the computer
     s = remember(d.get("session_id", ""), d)
     sent = []
     for i, (q_text, labels) in enumerate(questions):
@@ -1164,8 +1205,14 @@ def wait_answers(cfg, d, questions):
         sent.append([mid, text, labels, None])
     ensure_poller()
     owner = claude_pid()
+    tool = pending_tool(d) if d.get("tool_name") not in (None, "AskUserQuestion") else None
     while any(x[3] is None for x in sent):
-        if (not loop and not away(cfg)) or not alive(owner):  # back at the computer, or the session was closed
+        if answered_in_terminal(tool):
+            for mid, text, _, _ in sent:
+                rm(STATE / "pending" / f"{mid}.json")
+                edit(cfg, mid, text + "\n\n— Answered in the terminal.")
+            return None
+        if (not hold and not away(cfg)) or not alive(owner):  # back at the computer, or the session was closed
             for mid, text, _, _ in sent:
                 rm(STATE / "pending" / f"{mid}.json")
                 edit(cfg, mid, text + "\n\n— Moved to the terminal.")
@@ -1205,13 +1252,15 @@ def hook_ask(d, cfg):
 
 
 def hook_permission(d, cfg):
-    """PermissionRequest: when you're away (or it's a loop), allow or deny from Telegram; otherwise the normal dialog."""
-    if not (away(cfg) or in_loop(d)) or project_of(d) in muted_names():
+    """PermissionRequest: allow or deny from Telegram. By default always (a prompt can block a session you aren't
+    looking at for hours); with permissions_always off, only when you're away or it's a loop."""
+    always = cfg.get("permissions_always", True)
+    if not (always or away(cfg) or in_loop(d)) or project_of(d) in muted_names():
         return 0
     tool = d.get("tool_name", "?")
     detail = json.dumps(d.get("tool_input") or {}, ensure_ascii=False)
     q = f"Permission: {tool}\n{clip(detail, 1500)}\n\nReply with text to deny and tell Claude why."
-    answers = wait_answers(cfg, d, [(q, ["Allow", "Deny"])])
+    answers = wait_answers(cfg, d, [(q, ["Allow", "Deny"])], stay=always)
     if answers is None:
         return 0
     a = answers[0]
