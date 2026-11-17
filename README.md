@@ -123,6 +123,12 @@ You're always told which session got your message. If that session is busy, the 
 
 It answers you in Telegram and shows the message it wants to send to each session, with *Send* / *Cancel* buttons: nothing is sent until you tap *Send*. That's on purpose: what the sessions wrote is part of what the orchestrator reads, and text a session picked up (a web page, a file) could try to steer it. Reply to its answer to keep talking to it. It has no tools and never sends `/commands`. It runs `claude -p --model sonnet`.
 
+### Opening a new session
+
+`/new-session @project what it should do` opens a new Claude Code session in that project, with your text as its first prompt, and its answer comes back to Telegram. With Orca it works for every project Orca knows, even one with no session open. Without Orca it opens a tmux window when the bridge runs inside tmux.
+
+`/new-session @general …` opens it in your home folder, or in `general_dir` from the config. With Orca, that folder has to be a project in Orca.
+
 ### Commands to a session
 
 `@my-app /compact`, or any single-line `/command`, is typed into that session's terminal. This only works when the session is idle and runs inside Orca or tmux. Commands only go to a session you named (or whose message you replied to), never to one the router guessed: a `/clear` in the wrong session would wipe its context. Only lines that start with `/` are typed, so shell lines like `!rm …` can't be run from Telegram.
@@ -132,6 +138,7 @@ It answers you in Telegram and shows the message it wants to send to each sessio
 | Command | |
 |---|---|
 | `@general …` | Ask the orchestrator that sees every session, or have it pass messages on |
+| `/new-session @project …` | Open a new session in that project with your text as its first prompt |
 | `/projects` | Open projects with the `@name` to type, what each session is doing and its last reply |
 | `/sessions @project` | The sessions of one project, each with the `@project:tag` that talks to it |
 | `/status` | Whether you're away, open sessions (❓ waiting on you · idle … working), what's muted |
@@ -141,6 +148,10 @@ It answers you in Telegram and shows the message it wants to send to each sessio
 | `/unmute <project>` | Undo it |
 
 Spanish aliases work too: `/proyectos`, `/sesiones`, `/estado`, `/lejos`, `/vuelvo`.
+
+### Loops
+
+Nobody watches a loop's terminal, so in a session that runs a loop, permission prompts and `AskUserQuestion` dialogs always go to Telegram, even when you're at the computer, and wait there for your answer. This also covers the prompts Claude Code still shows in *bypass permissions* mode, and prompts raised by subagents. The message starts with *Loop paused*.
 
 ### Several computers
 
@@ -158,6 +169,7 @@ Everything lives in `~/.claude-telegram/config.json` (set `CLAUDE_TELEGRAM_HOME`
   "idle_away_min": 3,
   "away_after_min": 10,
   "notify_finished": false,
+  "general_dir": "~",
   "quick_replies": ["Yes", "No", "Do what you think is best"]
 }
 ```
@@ -167,6 +179,7 @@ Everything lives in `~/.claude-telegram/config.json` (set `CLAUDE_TELEGRAM_HOME`
 | `idle_away_min` | Minutes without keyboard or mouse input before you count as away. `0` turns idle detection off. |
 | `away_after_min` | Only used where idle detection isn't available or is off: minutes without typing a prompt before you count as away. Set both to `0` and only `/away` makes you away. |
 | `notify_finished` | Also message you when a turn ends without a question. |
+| `general_dir` | Folder where `/new-session @general` opens sessions. Default: your home folder. |
 | `quick_replies` | The buttons under text questions. Each sends its own text as your answer, so write them in the language you use with Claude. |
 
 The environment variables `CLAUDE_TELEGRAM_TOKEN` and `CLAUDE_TELEGRAM_CHAT_ID` override the file. `CLAUDE_TELEGRAM_DISABLE=1` turns the hooks off for one session.
@@ -200,7 +213,7 @@ Picking a session from a free-form message runs `claude -p --model haiku` with n
 
 ## Limits
 
-- Subagents and `claude -p` runs are skipped.
+- Subagents and `claude -p` runs don't send alerts of their own, except their permission prompts and questions, which block the session.
 - An idle session listens for up to 24 hours (the hook timeout). After that, messages for it wait until it runs again.
 - Sending `/commands` needs Orca or tmux; plain messages work in any terminal.
 - One bot per computer (see "Several computers").

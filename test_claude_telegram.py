@@ -488,6 +488,28 @@ class Commands(Base):
         self.env.update(CLAUDE_TELEGRAM_ORCA=str(orca), FAKE_ORCA_LOG=str(self.home / "orca.log"), ORCA_TERMINAL_HANDLE="term_abc")
         return self.home / "orca.log"
 
+    def test_new_session_opens_one_in_the_project_and_its_answer_comes_back(self):
+        log = self.fake_orca()
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push(msg("/new-session @shop write the README"))
+        self.wait_for(lambda: log.exists() and '"launch"' in log.read_text())
+        launch = [json.loads(l) for l in log.read_text().splitlines() if '"launch"' in l][0]
+        self.assertEqual(launch, ["agent", "launch", "--agent", "claude", "--worktree", "path:/work/my-shop",
+                                  "--surface", "terminal", "--prompt", "write the README", "--json"])
+        self.wait_for(lambda: self.tg.find("new session"))
+        # the new session starts with that prompt: it isn't you typing, and its answer goes to Telegram
+        self.hook("prompt", {"session_id": "s9", "cwd": "/work/my-shop", "prompt": "write the README"})
+        self.hook("stop", stop({**BASE, "session_id": "s9"}, "README written."), background=True)
+        self.wait_for(lambda: self.tg.find("README written."))
+        self.assertIn("my-shop", self.tg.find("README written.")[0]["text"])
+
+    def test_new_session_without_orca_or_tmux_explains(self):
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push(msg("/new-session @shop write the README"))
+        self.wait_for(lambda: self.tg.find("Orca or tmux"))
+
     def test_slash_command_is_typed_into_an_orca_terminal(self):
         log = self.fake_orca()
         p = self.hook("stop", stop(BASE, "Done."), background=True)

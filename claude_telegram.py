@@ -10,6 +10,7 @@ Standard library only. Works on macOS, Linux and Windows (hooks run through sh: 
     python3 claude_telegram.py uninstall [--settings PATH ...]
     python3 claude_telegram.py test            # send a test message
 """
+import hashlib
 import json
 import os
 import re
@@ -387,6 +388,7 @@ def remember(sid, d):
     s = session(sid)
     s["cwd"] = d.get("cwd") or s.get("cwd", "")
     s["project"] = project_of(d) or s.get("project", "")
+    s["root"] = os.environ.get("CLAUDE_PROJECT_DIR") or s.get("root") or s["cwd"]  # for /new-session
     if d.get("session_title"):
         s["title"] = d["session_title"]
     if not s.get("prompt"):
@@ -493,6 +495,70 @@ def waiting_texts(cfg):
 SLASH = re.compile(r"/[A-Za-z][\w:.-]*( [^\n]*)?")
 
 
+def orca_cmd(*args):
+    exe = os.environ.get("CLAUDE_TELEGRAM_ORCA") or os.environ.get("ORCA_CLI_COMMAND") or shutil.which("orca") or "orca"
+    return ([sys.executable] if exe.endswith(".py") else []) + [exe, *args]  # .py: a stand-in used by the tests
+
+
+NEW_SESSION = re.compile(r"/(?:new-session|new_session|newsession|nueva-sesion|nueva_sesion)(?:@\S+)?\s+@(\S+)\s+(.+)", re.S | re.I)
+
+
+def new_session(cfg, text):
+    """/new-session @project TEXT: open a new Claude Code session in that project, with TEXT as its first prompt.
+    @general opens it in general_dir (your home folder by default)."""
+    m = NEW_SESSION.fullmatch(text.strip())
+    if not m:
+        send(cfg, "Use: /new-session @project what it should do  (or @general for your home folder)")
+        return
+    name, prompt = m.group(1).lower(), m.group(2).strip()
+    sessions = open_sessions()
+    in_orca = any((s.get("term") or {}).get("orca") for s in sessions.values())  # its sessions run inside Orca
+    if name == "general":
+        roots = [os.path.expanduser(cfg.get("general_dir") or "~")]
+    else:
+        known = [s.get("root") or s.get("cwd") for s in sessions.values()]
+        if in_orca:  # every Orca workspace, also projects with no session open now
+            try:
+                out = json.loads(subprocess.run(orca_cmd("worktree", "list", "--json"), capture_output=True, text=True, timeout=20).stdout)
+                known += [w["path"] for w in out["result"]["worktrees"] if not w.get("isArchived")]
+            except Exception as e:
+                log(f"orca worktree list failed: {e}")
+        known = list(dict.fromkeys(r for r in known if r))
+        exact = [r for r in known if Path(r).name.lower() == name]
+        roots = exact or [r for r in known if name in Path(r).name.lower()]
+    if len(roots) != 1:
+        found = ", ".join(sorted(Path(r).name for r in roots)[:15])
+        send(cfg, f"Which project? “@{name}” matches {found}." if roots else f"No project I know matches “@{name}”. /projects lists them.")
+        return
+    root = roots[0]
+    try:
+        if in_orca:
+            r = subprocess.run(orca_cmd("agent", "launch", "--agent", "claude", "--worktree", f"path:{root}",
+                                        "--surface", "terminal", "--prompt", prompt, "--json"),
+                               capture_output=True, text=True, timeout=60)
+            try:
+                out = json.loads(r.stdout)
+            except ValueError:
+                out = {"ok": r.returncode == 0, "error": {"message": (r.stderr or r.stdout).strip()}}
+            if not out.get("ok"):
+                err = (out.get("error") or {}).get("message") or "unknown error"
+                if err == "selector_not_found":
+                    err = "it isn't a project in Orca. Add the folder in Orca first" + (
+                        ", or set general_dir in config.json to a folder Orca has" if name == "general" else "")
+                raise RuntimeError(err)
+        elif os.environ.get("TMUX"):
+            subprocess.run(["tmux", "new-window", "-d", "-c", root, "claude", prompt], timeout=20, check=True)
+        else:
+            send(cfg, "I can only open new sessions with Orca or tmux.")
+            return
+    except Exception as e:
+        log(f"new session failed: {e}")
+        send(cfg, f"Couldn't open a session in {Path(root).name}: {clip(str(e), 300)}.")
+        return
+    write(STATE / "spawned" / hashlib.sha1(prompt.encode()).hexdigest(), root)
+    send(cfg, f"→ new session in {Path(root).name}: starting with “{clip(prompt, 200)}”. Its answer will come here.")
+
+
 def type_command(cfg, sid, s, text):
     """Slash commands (/compact, /clear, /loop …) can't be sent as a message: type them into the session's terminal.
     Only single-line /commands, so nobody can type `!shell` lines from Telegram."""
@@ -503,9 +569,7 @@ def type_command(cfg, sid, s, text):
         return
     try:
         if term.get("orca"):
-            exe = os.environ.get("CLAUDE_TELEGRAM_ORCA") or os.environ.get("ORCA_CLI_COMMAND") or shutil.which("orca") or "orca"
-            cmd = ([sys.executable] if exe.endswith(".py") else []) + [  # .py: a stand-in used by the tests
-                exe, "terminal", "send", "--terminal", term["orca"], "--text", text, "--enter", "--json"]
+            cmd = orca_cmd("terminal", "send", "--terminal", term["orca"], "--text", text, "--enter", "--json")
             subprocess.run(cmd, capture_output=True, timeout=20, check=True)
         elif term.get("tmux"):
             subprocess.run(["tmux", "send-keys", "-t", term["tmux"], "-l", text], timeout=10, check=True)
@@ -744,6 +808,8 @@ def dispatch(cfg, update):
         project = text.split(maxsplit=1)[1].strip() if " " in text else ""
         names = set_muted(project, cmd == "/mute") if project else muted_names()
         send(cfg, f"Muted: {', '.join(names) or 'none'}.\nUse /mute <project> or /unmute <project> (the folder name shown in each message).")
+    elif cmd.split("@")[0] in ("/new-session", "/new_session", "/newsession", "/nueva-sesion", "/nueva_sesion"):
+        threading.Thread(target=new_session, args=(cfg, text), daemon=True).start()
     elif cmd in ("/projects", "/proyectos") or (cmd in ("/sessions", "/sesiones") and " " in text):
         projects(cfg, text.split(maxsplit=1)[1].strip().lstrip("@").lower() if " " in text else "")
     elif cmd in ("/status", "/estado", "/start", "/help", "/sessions", "/sesiones"):
@@ -803,7 +869,7 @@ def status(cfg):
     if muted_names():
         lines.append(f"Muted: {', '.join(muted_names())}")
     lines.append("\n❓ waiting on you · idle … working\nReply (swipe) to a message to answer it. Write “@project message” to talk to a session, "
-                 "“@general …” for the orchestrator that sees them all, or just write and I'll find the session.\n/projects · /sessions @project · /away · /back · /mute <project> · /unmute <project>")
+                 "“@general …” for the orchestrator that sees them all, or just write and I'll find the session.\n/projects · /sessions @project · /new-session @project … · /away · /back · /mute <project> · /unmute <project>")
     send(cfg, "\n".join(lines))
 
 
@@ -940,6 +1006,11 @@ def hook_prompt(d):
     injected = STATE / "injected" / safe_id(sid)
     typed_by_us = injected.exists() and injected.read_text("utf-8").strip() == prompt.strip()
     rm(injected)
+    spawned = STATE / "spawned" / hashlib.sha1(prompt.strip().encode()).hexdigest()
+    if spawned.exists():  # the first prompt of a session opened with /new-session: answer goes to Telegram
+        rm(spawned)
+        typed_by_us = True
+        touch(STATE / "tgturn" / safe_id(sid))
     # Loop iterations, Claude Code's own wake-ups ("<task-notification>…") and commands we typed from Telegram
     # are not you at the keyboard.
     if not typed_by_us and prompt not in (s.get("crons") or []) and not prompt.lstrip().startswith("<"):
