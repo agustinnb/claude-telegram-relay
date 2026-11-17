@@ -109,6 +109,7 @@ Loop notices are sent right away, whether you're away or not. Muted projects get
 - Without `@`, Haiku picks the session from your message alone, and shows buttons when it isn't sure.
 - Replying to any message about a session (its questions, its answers, the "→ my-app: sent" confirmations) talks to that session.
 - In a `/projects` or `/sessions` list, select one session's line and use Telegram's *Quote* to reply: the message goes to that session.
+- In `/projects`, tap a name to copy it. To get buttons that put `@project:tag` straight into your message box, turn on inline mode for your bot once: send `/setinline` to @BotFather, pick your bot and type any placeholder (for example `message`). The buttons show up from the next `/projects`.
 
 You're always told which session got your message. If that session is busy, the message waits until it finishes its current step. The session's answer comes back to Telegram as a reply.
 

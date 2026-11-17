@@ -134,10 +134,21 @@ def tg(token, method, **params):
         return json.load(r).get("result")
 
 
-def send(cfg, text, buttons=None, reply_to=None):
-    params = {"chat_id": cfg["chat_id"], "text": clip(text, 4000)}
+def send(cfg, text, buttons=None, reply_to=None, code=(), markup=None):
+    """code: parts of the text shown as code, which Telegram copies on tap. markup: a ready reply_markup."""
+    text = clip(text, 4000)
+    params = {"chat_id": cfg["chat_id"], "text": text}
+    entities = []
+    for part in dict.fromkeys(code):
+        for m in re.finditer(re.escape(part) + r"(?![\w:-])", text):
+            utf16 = lambda s: len(s.encode("utf-16-le")) // 2  # Telegram counts UTF-16 code units
+            entities.append({"type": "code", "offset": utf16(text[:m.start()]), "length": utf16(part)})
+    if entities:
+        params["entities"] = sorted(entities, key=lambda e: e["offset"])
     if buttons:
         params["reply_markup"] = {"inline_keyboard": [[{"text": clip(b, 60), "callback_data": str(i)}] for i, b in enumerate(buttons)]}
+    if markup:
+        params["reply_markup"] = markup
     if reply_to:
         params["reply_to_message_id"] = reply_to
     try:
@@ -145,6 +156,19 @@ def send(cfg, text, buttons=None, reply_to=None):
     except Exception as e:  # network down, bad token: never break the Claude session
         log(f"send failed: {e}")
         return None
+
+
+_me = {}
+
+
+def bot_me(cfg):
+    """The bot's getMe, cached for 5 minutes: its username and whether inline mode is on."""
+    if time.time() - _me.get("at", 0) > 300:
+        try:
+            _me.update(tg(cfg["token"], "getMe") or {}, at=time.time())
+        except Exception as e:
+            log(f"getMe failed: {e}")
+    return _me
 
 
 def edit(cfg, mid, text):
@@ -618,6 +642,12 @@ def pick_session(text, sessions):
 
 
 def dispatch(cfg, update):
+    if update.get("inline_query"):  # typing after a fill-in button: nothing to show, stop the spinner
+        try:
+            tg(cfg["token"], "answerInlineQuery", inline_query_id=update["inline_query"]["id"], results=[], cache_time=0)
+        except Exception as e:
+            log(f"answerInlineQuery failed: {e}")
+        return
     cb = update.get("callback_query")
     if cb:
         msg = cb.get("message") or {}
@@ -633,6 +663,9 @@ def dispatch(cfg, update):
     if not from_owner(cfg, m.get("chat"), m.get("from")):
         return
     text = (m.get("text") or "").strip()
+    me = "@" + (bot_me(cfg).get("username") or "\0")
+    if text.lower().startswith(me.lower() + " "):  # a fill-in button puts the bot's name first
+        text = text[len(me):].strip()
     cmd = text.split()[0].split("@")[0].lower() if text else ""
     if cmd in ("/away", "/lejos"):
         touch(STATE / "away")
@@ -723,8 +756,14 @@ def projects(cfg, only=""):
             lines.append(f"  @{name}:{safe_id(sid)[:4]} · {flag} · {what}")
             if s.get("last"):
                 lines.append(f"    last: {clip(' '.join(s['last'].split()), 90)}")
-    lines.append("\nWrite “@name message” to talk to a project, or “@name:tag message” to talk to one session.")
-    send(cfg, "\n".join(lines))
+    lines.append("\nWrite “@name message” to talk to a project, or “@name:tag message” to talk to one session. "
+                 "Tap a name to copy it.")
+    names = [f"@{name}" for name in by_project] + [f"@{name}:{safe_id(sid)[:4]}" for name, group in by_project.items() for sid, _ in group]
+    markup = None
+    if bot_me(cfg).get("supports_inline_queries"):  # a button can only fill the chat box when inline mode is on
+        rows = [[{"text": n, "switch_inline_query_current_chat": n + " "}] for n in names if ":" in n or len(by_project[n[1:]]) > 1]
+        markup = {"inline_keyboard": rows[:40]}
+    send(cfg, "\n".join(lines), code=names, markup=markup)
 
 
 def housekeeping(cfg):

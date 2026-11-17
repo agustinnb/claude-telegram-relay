@@ -23,6 +23,7 @@ CHAT = 42
 class FakeTelegram:
     def __init__(self):
         self.calls, self.updates, self.next_mid, self.next_uid = [], [], 100, 1
+        self.inline = False  # whether the bot has inline mode on (@BotFather /setinline)
         self.lock = threading.Lock()
         fake = self
 
@@ -40,7 +41,7 @@ class FakeTelegram:
                         off = body.get("offset", 0)
                         result = [u for u in fake.updates if u["update_id"] >= off]
                     elif method == "getMe":
-                        result = {"username": "test_bot"}
+                        result = {"username": "test_bot", "supports_inline_queries": fake.inline}
                     fake.calls.append((method, body))
                 data = json.dumps({"ok": True, "result": result}).encode()
                 self.send_response(200)
@@ -635,6 +636,33 @@ class Admin(Base):
         self.assertIn("@blog", text)
         self.assertIn("add stripe checkout", text)
         self.assertIn("Checkout done.", text)
+
+    def two_shop_sessions(self):
+        for sid in ("aaaa1111", "bbbb2222"):
+            self.hook("stop", stop({**BASE, "session_id": sid}, "Done."), background=True)
+        for sid in ("aaaa1111", "bbbb2222"):
+            self.wait_for(self.listening(sid))
+        self.tg.push(msg("/projects"))
+        self.wait_for(lambda: self.tg.find("@my-shop:bbbb"))
+        return self.tg.find("@my-shop:bbbb")[0]
+
+    def test_projects_names_are_code_so_a_tap_copies_them(self):
+        listing = self.two_shop_sessions()
+        text = listing["text"]
+        codes = {text[e["offset"]:e["offset"] + e["length"]] for e in listing.get("entities", []) if e["type"] == "code"}
+        self.assertIn("@my-shop:aaaa", codes)
+        self.assertIn("@my-shop:bbbb", codes)
+        self.assertNotIn("reply_markup", listing)  # inline mode off: no buttons that would do nothing
+
+    def test_with_inline_mode_buttons_put_the_name_in_the_chat_box(self):
+        self.tg.inline = True
+        listing = self.two_shop_sessions()
+        fills = [b.get("switch_inline_query_current_chat") for row in listing["reply_markup"]["inline_keyboard"] for b in row]
+        self.assertIn("@my-shop:bbbb ", fills)
+        # Telegram then sends “@test_bot @my-shop:bbbb …”: the bot's own name is dropped
+        self.tg.push(msg("@test_bot @my-shop:bbbb what are you on?"))
+        self.wait_for(lambda: self.tg.find("→ my-shop: sent"))
+        self.assertFalse(self.tg.find("Which session"))  # went straight to bbbb, no picking between the two
 
     def test_config_and_state_are_private(self):
         if os.name == "nt":
