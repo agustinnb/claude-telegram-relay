@@ -73,10 +73,12 @@ class FakeTelegram:
         return [m for m in self.sent() if word in m["text"]]
 
 
-def msg(text, reply_to=None, sender=CHAT):
+def msg(text, reply_to=None, sender=CHAT, reply_text=None, quote=None):
     m = {"chat": {"id": CHAT}, "from": {"id": sender}, "text": text}
     if reply_to:
-        m["reply_to_message"] = {"message_id": reply_to}
+        m["reply_to_message"] = {"message_id": reply_to, "text": reply_text or ""}
+    if quote:
+        m["quote"] = {"text": quote}  # Telegram's "quote": the part of the message you selected
     return {"message": m}
 
 
@@ -345,6 +347,36 @@ class Messages(Base):
         self.assertEqual(code, 2)
         self.assertIn("go for attempt 4", err)
         self.assertIsNone(p1.poll())
+
+    def test_reply_to_a_sent_confirmation_goes_to_that_session(self):
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push(msg("@shop first"))
+        self.assertEqual(self.finish(p)[0], 2)
+        conf = self.tg.find("→ my-shop: sent")[0]
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push(msg("and a second thing", reply_to=conf["_mid"], reply_text=conf["text"]))
+        code, _, err = self.finish(p)
+        self.assertEqual(code, 2)
+        self.assertIn("and a second thing", err)
+
+    def test_quoting_a_session_line_of_projects_talks_to_it(self):
+        a = {**BASE, "session_id": "aaaa1111"}
+        b = {**BASE, "session_id": "bbbb2222"}
+        pa = self.hook("stop", stop(a, "Done."), background=True)
+        pb = self.hook("stop", stop(b, "Done."), background=True)
+        self.wait_for(self.listening("aaaa1111"))
+        self.wait_for(self.listening("bbbb2222"))
+        self.tg.push(msg("/projects"))
+        self.wait_for(lambda: self.tg.find("@my-shop:bbbb"))
+        listing = self.tg.find("@my-shop:bbbb")[0]
+        line = next(l for l in listing["text"].splitlines() if "@my-shop:bbbb" in l)
+        self.tg.push(msg("what are you on?", reply_to=listing["_mid"], reply_text=listing["text"], quote=line))
+        code, _, err = self.finish(pb)
+        self.assertEqual(code, 2)
+        self.assertIn("what are you on?", err)
+        self.assertIsNone(pa.poll())
 
     def test_router_picks_the_session(self):
         self.env["FAKE_ROUTE"] = json.dumps({"session": "s2"})

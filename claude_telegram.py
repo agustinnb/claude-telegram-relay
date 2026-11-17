@@ -475,7 +475,7 @@ def type_command(cfg, sid, s, text):
     term = s.get("term") or {}
     project = s.get("project", "?")
     if not listening(sid):
-        send(cfg, f"→ {project}: it's busy. Send {text.split()[0]} again when it's idle.")
+        said(cfg, sid, f"→ {project}: it's busy. Send {text.split()[0]} again when it's idle.")
         return
     try:
         if term.get("orca"):
@@ -487,15 +487,23 @@ def type_command(cfg, sid, s, text):
             subprocess.run(["tmux", "send-keys", "-t", term["tmux"], "-l", text], timeout=10, check=True)
             subprocess.run(["tmux", "send-keys", "-t", term["tmux"], "Enter"], timeout=10, check=True)
         else:
-            send(cfg, f"→ {project}: I can only type commands like {text.split()[0]} into sessions running inside Orca or tmux.")
+            said(cfg, sid, f"→ {project}: I can only type commands like {text.split()[0]} into sessions running inside Orca or tmux.")
             return
     except Exception as e:
         log(f"typing a command failed: {e}")
-        send(cfg, f"→ {project}: couldn't type {text.split()[0]} into its terminal.")
+        said(cfg, sid, f"→ {project}: couldn't type {text.split()[0]} into its terminal.")
         return
     write(STATE / "injected" / sid, text)  # so the prompt hook doesn't take it for you at the keyboard
     touch(STATE / "tgturn" / sid)
-    send(cfg, f"→ {project}: typed {clip(text, 100)}")
+    said(cfg, sid, f"→ {project}: typed {clip(text, 100)}")
+
+
+def said(cfg, sid, text):
+    """Send a message about one session; replying to it later talks to that session."""
+    mid = send(cfg, text)
+    if mid:
+        write(STATE / "msgs" / str(mid), safe_id(sid))
+    return mid
 
 
 def deliver(cfg, sid, text, answer_to=None):
@@ -516,9 +524,9 @@ def deliver(cfg, sid, text, answer_to=None):
         save(STATE / "notes" / f"{sid}.json", n)
         edit(cfg, answer_to, (n.get("question_text") or "") + f"\n\n— Sent: {clip(text, 300)}")
     elif listening(sid):
-        send(cfg, f"→ {s.get('project', '?')}: sent.")
+        said(cfg, sid, f"→ {s.get('project', '?')}: sent.")
     else:
-        send(cfg, f"→ {s.get('project', '?')}: it's busy, it will read this when it finishes the current step.")
+        said(cfg, sid, f"→ {s.get('project', '?')}: it's busy, it will read this when it finishes the current step.")
 
 
 def no_match(cfg, name, sessions):
@@ -641,7 +649,8 @@ def dispatch(cfg, update):
     elif cmd in ("/status", "/estado", "/start", "/help", "/sessions", "/sesiones"):
         status(cfg)
     elif m.get("reply_to_message"):
-        on_answer(cfg, m["reply_to_message"]["message_id"], {"text": text})
+        quoted = (m.get("quote") or {}).get("text") or m["reply_to_message"].get("text") or ""
+        on_answer(cfg, m["reply_to_message"]["message_id"], {"text": text}, quoted)
     elif text:
         waiting = {**waiting_texts(cfg), **hook_questions()}
         if len(waiting) == 1 and not SLASH.fullmatch(text) and not text.startswith("@"):  # @project and commands pick their own session
@@ -650,7 +659,7 @@ def dispatch(cfg, update):
             threading.Thread(target=route, args=(cfg, text), daemon=True).start()  # Claude takes a few seconds
 
 
-def on_answer(cfg, mid, answer):
+def on_answer(cfg, mid, answer, quoted=""):
     """A reply or button tap on one of our messages."""
     if (STATE / "pending" / f"{mid}.json").exists():  # a hook is holding a dialog open for it
         save(STATE / "inbox" / f"{mid}.json", answer)
@@ -663,8 +672,13 @@ def on_answer(cfg, mid, answer):
             deliver(cfg, r["sids"][answer["choice"]], r["text"])
         return
     sid = (STATE / "msgs" / str(mid)).read_text().strip() if (STATE / "msgs" / str(mid)).exists() else None
+    if not sid and "text" in answer:  # a /projects or /sessions line you quoted: “@project:tag …”
+        tags = {tag for _, tag in re.findall(r"@(\S+?):([0-9A-Za-z_-]{4})\b", quoted)}
+        hits = [s for s in open_sessions() if any(s.lower().startswith(tag.lower()) for tag in tags)]
+        sid = hits[0] if len(hits) == 1 else None
     if not sid:
-        send(cfg, "I don't know which session that message belongs to.", reply_to=mid)
+        send(cfg, "I don't know which session that message belongs to. Quote one session's line from /projects, "
+                  "or write “@project message”.", reply_to=mid)
         return
     is_open_question = waiting_texts(cfg).get(mid) == sid
     labels = cfg.get("quick_replies") or []

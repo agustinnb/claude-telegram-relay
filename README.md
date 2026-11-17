@@ -107,7 +107,8 @@ Loop notices are sent right away, whether you're away or not. Muted projects get
 - If a project has several sessions, you get buttons to pick one. To skip them, use the session's tag from `/projects`: `@my-app:3f2a what's left to do?`.
 - If `@word` isn't a project name (for example the name of a module one session is working on), Claude Haiku looks at what each session is doing and picks the one you mean.
 - Without `@`, Haiku picks the session from your message alone, and shows buttons when it isn't sure.
-- Replying to any message that came from a session also talks to that session.
+- Replying to any message about a session (its questions, its answers, the "→ my-app: sent" confirmations) talks to that session.
+- In a `/projects` or `/sessions` list, select one session's line and use Telegram's *Quote* to reply: the message goes to that session.
 
 You're always told which session got your message. If that session is busy, the message waits until it finishes its current step. The session's answer comes back to Telegram as a reply.
 
