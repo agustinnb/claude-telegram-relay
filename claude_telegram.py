@@ -1319,7 +1319,8 @@ def hook_permission(d, cfg):
     if not d.get("agent_id") and d.get("permission_mode"):
         save_session(sid, {**session(sid), "mode": d["permission_mode"]})  # keep it current: you can leave bypass any time
     parent_mode = session(sid).get("mode") if d.get("agent_id") else None
-    if cfg.get("auto_allow_in_bypass") and not touches_protected(d.get("tool_input")) and "bypassPermissions" in (d.get("permission_mode"), parent_mode):
+    modes = set(cfg.get("auto_allow_modes") or ["bypassPermissions"])  # "auto" adds auto-mode sessions
+    if cfg.get("auto_allow_in_bypass") and not touches_protected(d.get("tool_input")) and modes & {d.get("permission_mode"), parent_mode}:
         # You run this session with bypass permissions and chose to also skip the checks Claude Code still makes.
         log(f"auto-allowed {d.get('tool_name')} in {project_of(d)}: {clip(json.dumps(d.get('tool_input'), ensure_ascii=False), 200)}")
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}))

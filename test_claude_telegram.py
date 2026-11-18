@@ -729,6 +729,22 @@ class Dialogs(Base):
                                                 "tool_input": {"command": "rm tmp.txt"}})
         self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
 
+    def test_auto_mode_sessions_can_be_auto_allowed_too(self):
+        cfg = json.loads((self.home / "config.json").read_text())
+        (self.home / "config.json").write_text(json.dumps({**cfg, "auto_allow_in_bypass": True,
+                                                           "auto_allow_modes": ["bypassPermissions", "auto"]}))
+        code, out, _ = self.hook("permission", {**BASE, "permission_mode": "auto", "tool_name": "Bash",
+                                                "tool_input": {"command": "docker ps"}})
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
+
+    def test_auto_mode_still_asks_by_default(self):
+        self.auto_allow()
+        q = self.hook("permission", {**BASE, "permission_mode": "auto", "tool_name": "Bash",
+                                     "tool_input": {"command": "docker ps"}}, background=True)
+        self.wait_for(lambda: self.tg.find("docker ps"))
+        self.tg.push(tap(self.tg.find("docker ps")[0]["_mid"], 1))
+        self.finish(q)
+
     def test_protected_paths_are_never_allowed_without_asking(self):
         self.auto_allow()  # editing hooks or permissions would let a misled agent give itself more power
         q = self.hook("permission", {**BASE, "permission_mode": "bypassPermissions", "tool_name": "Edit",
