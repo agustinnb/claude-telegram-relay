@@ -193,7 +193,7 @@ Everything lives in `~/.claude-telegram/config.json` (set `CLAUDE_TELEGRAM_HOME`
 | `notify_finished` | Also message you when a turn ends without a question. |
 | `general_dir` | Folder where `/new-session @general` opens sessions. Default: Orca's floating terminal with Orca, your home folder without it. |
 | `permissions_always` | Send every permission prompt to Telegram, even when you're at the computer (default `true`). With `false`, only when you're away or in a loop session. |
-| `auto_allow_in_bypass` | In sessions running with *bypass permissions*, and their subagents, allow the prompts Claude Code still shows (protected paths, some deletions) without asking. Off by default: those are its last safety checks. Changes to `.claude/`, `.git/` or `settings.json` still ask you. Each allowed one is written to `log.txt`. |
+| `auto_allow_in_bypass` | In sessions running with *bypass permissions*, and their subagents, allow the prompts Claude Code still shows (protected paths, some deletions) without asking. Off by default: those are its last safety checks. Changes to `.claude/` (except memory notes in `.claude/projects/` and agent worktrees in `.claude/worktrees/`), `.git/` or `settings.json` still ask you. Each allowed one is written to `log.txt`. |
 | `auto_allow_modes` | Which permission modes `auto_allow_in_bypass` covers. Default `["bypassPermissions"]`; add `"auto"` to also allow what auto mode would ask you about. |
 | `quick_replies` | The buttons under text questions. Each sends its own text as your answer, so write them in the language you use with Claude. |
 

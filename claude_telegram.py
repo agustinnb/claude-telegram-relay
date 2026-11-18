@@ -1304,11 +1304,14 @@ def touches_protected(tool_input):
     """Files that control hooks, permissions or git, which a misled agent could change to give itself more: these
     always ask, even with auto_allow_in_bypass. Best effort against shell tricks: case, quotes and backslashes are
     dropped before matching, and a glob soon after ".c" or ".g" (".cl*", ".g?t") counts too: it asks rather than guess."""
-    text = json.dumps(tool_input or {}, ensure_ascii=False)
+    tool_input = {k: v for k, v in (tool_input or {}).items() if k not in ("content", "old_string", "new_string", "new_source")}
+    text = json.dumps(tool_input, ensure_ascii=False)  # the text written into a file isn't a path
     for key in ("file_path", "path", "notebook_path"):
-        if isinstance((tool_input or {}).get(key), str):
+        if isinstance(tool_input.get(key), str):
             text += " " + os.path.realpath(os.path.expanduser(tool_input[key]))
     flat = re.sub(r"[\"'`\\]", "", text.lower())
+    if "/.." not in flat:  # memory notes and agent worktrees live under .claude but control nothing
+        flat = re.sub(r"\.claude/(projects|worktrees)/", "/", flat)
     return bool(re.search(r"\.claude|\.git|settings(\.local)?\.json|\.[cg][a-z]{0,6}[*?\[]", flat))
 
 

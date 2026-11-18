@@ -763,6 +763,26 @@ class Dialogs(Base):
             self.tg.push(tap(self.tg.find(cmd.split()[-1][:6])[-1]["_mid"], 1))
             self.assertEqual(json.loads(self.finish(q)[1])["hookSpecificOutput"]["decision"]["behavior"], "deny", cmd)
 
+    def test_memory_worktrees_and_file_text_are_not_protected(self):
+        self.auto_allow()  # memory notes and agent worktrees live under .claude but control nothing
+        for tool, inp in [("Write", {"file_path": "/home/me/.claude/projects/my-shop/memory/notes.md",
+                                     "content": "edit .claude/settings.json and .gitignore later"}),
+                          ("Edit", {"file_path": "/work/my-shop/.claude/worktrees/agent-1/src/app.ts",
+                                    "old_string": "a", "new_string": "see .git/config"}),
+                          ("Bash", {"command": "cd /work/my-shop/.claude/worktrees/agent-1 && npm test"})]:
+            code, out, _ = self.hook("permission", {**BASE, "permission_mode": "bypassPermissions", "tool_name": tool,
+                                                    "tool_input": inp})
+            self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"}, inp)
+
+    def test_climbing_out_of_memory_still_asks(self):
+        self.auto_allow()
+        cmd = "echo x > ~/.claude/projects/../hooks.sh"
+        q = self.hook("permission", {**BASE, "permission_mode": "bypassPermissions", "tool_name": "Bash",
+                                     "tool_input": {"command": cmd}}, background=True)
+        self.wait_for(lambda: self.tg.find("hooks.sh"))
+        self.tg.push(tap(self.tg.find("hooks.sh")[0]["_mid"], 1))
+        self.finish(q)
+
     def test_leaving_bypass_stops_auto_allowing_its_subagents(self):
         self.auto_allow()
         self.hook("prompt", {**BASE, "permission_mode": "bypassPermissions", "prompt": "build it"})
