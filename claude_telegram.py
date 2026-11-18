@@ -993,10 +993,12 @@ def loop_made_at(path, job):
     try:
         with open(path, "rb") as f:
             for line in f:
-                if needle in line:
-                    ts = json.loads(line).get("timestamp", "")
-                    return calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
-    except (OSError, ValueError):
+                if needle in line and b'"timestamp"' in line:  # api-request-blob lines repeat it without one
+                    try:
+                        return calendar.timegm(time.strptime(json.loads(line)["timestamp"][:19], "%Y-%m-%dT%H:%M:%S"))
+                    except (ValueError, KeyError, TypeError):
+                        continue
+    except OSError:
         pass
     return time.time()
 

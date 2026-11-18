@@ -625,7 +625,8 @@ class Loops(Base):
     def loop_made(self, days_ago):
         t = self.home / "loop.jsonl"
         ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - days_ago * 86400))
-        t.write_text(json.dumps({"timestamp": ts, "message": {"content": [{"type": "tool_result", "content":
+        blob = {"type": "api-request-blob", "message": "Scheduled recurring job c1 (*/5 * * * *)."}  # no timestamp: skip it
+        t.write_text(json.dumps(blob) + "\n" + json.dumps({"timestamp": ts, "message": {"content": [{"type": "tool_result", "content":
                      "Scheduled recurring job c1 (*/5 * * * *). Auto-expires after 7 days."}]}}) + "\n")
         cron = {"id": "c1", "schedule": "*/5 * * * *", "recurring": True, "prompt": "check the deploy"}
         self.hook("stop", stop({**BASE, "transcript_path": str(t)}, "", [cron]), background=True)
