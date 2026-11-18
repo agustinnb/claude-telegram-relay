@@ -692,6 +692,16 @@ class Dialogs(Base):
         self.tg.push(tap(self.tg.find("settings.json")[0]["_mid"], 1))
         self.finish(q)
 
+    def test_protected_path_tricks_still_ask(self):
+        self.auto_allow()
+        for cmd in ["cat x > ~/.CLAUDE/settings.json", "echo x >> .cl''aude/hooks.json", "rm -rf .cl*/", "cd repo && rm -rf .g?t",
+                    "cp a $HOME/.claude-telegram/config.json"]:
+            q = self.hook("permission", {**BASE, "permission_mode": "bypassPermissions", "tool_name": "Bash",
+                                         "tool_input": {"command": cmd}}, background=True)
+            self.wait_for(lambda: self.tg.find(cmd.split()[-1][:6]))
+            self.tg.push(tap(self.tg.find(cmd.split()[-1][:6])[-1]["_mid"], 1))
+            self.assertEqual(json.loads(self.finish(q)[1])["hookSpecificOutput"]["decision"]["behavior"], "deny", cmd)
+
     def test_leaving_bypass_stops_auto_allowing_its_subagents(self):
         self.auto_allow()
         self.hook("prompt", {**BASE, "permission_mode": "bypassPermissions", "prompt": "build it"})

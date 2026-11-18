@@ -1255,6 +1255,18 @@ def hook_ask(d, cfg):
     return 0
 
 
+def touches_protected(tool_input):
+    """Files that control hooks, permissions or git, which a misled agent could change to give itself more: these
+    always ask, even with auto_allow_in_bypass. Best effort against shell tricks: case, quotes and backslashes are
+    dropped before matching, and a glob soon after ".c" or ".g" (".cl*", ".g?t") counts too: it asks rather than guess."""
+    text = json.dumps(tool_input or {}, ensure_ascii=False)
+    for key in ("file_path", "path", "notebook_path"):
+        if isinstance((tool_input or {}).get(key), str):
+            text += " " + os.path.realpath(os.path.expanduser(tool_input[key]))
+    flat = re.sub(r"[\"'`\\]", "", text.lower())
+    return bool(re.search(r"\.claude|\.git|settings(\.local)?\.json|\.[cg][a-z]{0,6}[*?\[]", flat))
+
+
 def hook_permission(d, cfg):
     """PermissionRequest: allow or deny from Telegram. By default always (a prompt can block a session you aren't
     looking at for hours); with permissions_always off, only when you're away or it's a loop."""
@@ -1262,10 +1274,7 @@ def hook_permission(d, cfg):
     if not d.get("agent_id") and d.get("permission_mode"):
         save_session(sid, {**session(sid), "mode": d["permission_mode"]})  # keep it current: you can leave bypass any time
     parent_mode = session(sid).get("mode") if d.get("agent_id") else None
-    # Never without asking: files that control hooks, permissions or git, which a misled agent could use to give itself more.
-    protected = re.search(r"(^|[\\/\"])(\.claude|\.git)([\\/\"]|$)|settings(\.local)?\.json",
-                          json.dumps(d.get("tool_input") or {}, ensure_ascii=False))
-    if cfg.get("auto_allow_in_bypass") and not protected and "bypassPermissions" in (d.get("permission_mode"), parent_mode):
+    if cfg.get("auto_allow_in_bypass") and not touches_protected(d.get("tool_input")) and "bypassPermissions" in (d.get("permission_mode"), parent_mode):
         # You run this session with bypass permissions and chose to also skip the checks Claude Code still makes.
         log(f"auto-allowed {d.get('tool_name')} in {project_of(d)}: {clip(json.dumps(d.get('tool_input'), ensure_ascii=False), 200)}")
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}))
