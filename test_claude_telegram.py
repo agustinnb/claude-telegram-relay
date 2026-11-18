@@ -684,6 +684,24 @@ class Dialogs(Base):
                                                 "tool_input": {"command": "rm tmp.txt"}})
         self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
 
+    def test_protected_paths_are_never_allowed_without_asking(self):
+        self.auto_allow()  # editing hooks or permissions would let a misled agent give itself more power
+        q = self.hook("permission", {**BASE, "permission_mode": "bypassPermissions", "tool_name": "Edit",
+                                     "tool_input": {"file_path": "/work/my-shop/.claude/settings.json"}}, background=True)
+        self.wait_for(lambda: self.tg.find("settings.json"))
+        self.tg.push(tap(self.tg.find("settings.json")[0]["_mid"], 1))
+        self.finish(q)
+
+    def test_leaving_bypass_stops_auto_allowing_its_subagents(self):
+        self.auto_allow()
+        self.hook("prompt", {**BASE, "permission_mode": "bypassPermissions", "prompt": "build it"})
+        self.hook("prompt", {**BASE, "permission_mode": "default", "prompt": "now carefully"})
+        q = self.hook("permission", {**BASE, "agent_id": "bg1", "permission_mode": "default", "tool_name": "Bash",
+                                     "tool_input": {"command": "rm tmp.txt"}}, background=True)
+        self.wait_for(lambda: self.tg.find("rm tmp.txt"))
+        self.tg.push(tap(self.tg.find("rm tmp.txt")[0]["_mid"], 1))
+        self.finish(q)
+
     def test_bypass_prompts_still_ask_when_not_enabled(self):
         q = self.hook("permission", {**BASE, "permission_mode": "bypassPermissions", "tool_name": "Bash",
                                      "tool_input": {"command": "rm -rf dist"}}, background=True)
