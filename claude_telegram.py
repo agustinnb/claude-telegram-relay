@@ -1305,14 +1305,12 @@ def touches_protected(tool_input):
     always ask, even with auto_allow_in_bypass. Best effort against shell tricks: case, quotes and backslashes are
     dropped before matching, and a glob soon after ".c" or ".g" (".cl*", ".g?t") counts too: it asks rather than guess."""
     tool_input = {k: v for k, v in (tool_input or {}).items() if k not in ("content", "old_string", "new_string", "new_source")}
-    text = json.dumps(tool_input, ensure_ascii=False)  # the text written into a file isn't a path
-    for key in ("file_path", "path", "notebook_path"):
-        if isinstance(tool_input.get(key), str):
-            raw = tool_input[key].replace("\\", "/")
-            text = text.replace(json.dumps(tool_input[key], ensure_ascii=False)[1:-1], "")
-            for p in (raw, os.path.realpath(os.path.expanduser(tool_input[key])).replace("\\", "/")):
-                p = p.lower()  # memory notes and agent worktrees live under .claude but control nothing
-                text += " " + (p if "/.." in p else re.sub(r"\.claude/(projects|worktrees)/", "/", p))
+    paths = {k: v for k, v in tool_input.items() if k in ("file_path", "path", "notebook_path") and isinstance(v, str)}
+    text = json.dumps({k: v for k, v in tool_input.items() if k not in paths}, ensure_ascii=False)  # file text isn't a path
+    for value in paths.values():
+        for p in (value.replace("\\", "/"), os.path.realpath(os.path.expanduser(value)).replace("\\", "/")):
+            p = p.lower()  # memory notes and agent worktrees live under .claude but control nothing
+            text += " " + (p if "/.." in p else re.sub(r"\.claude/(projects|worktrees)/", "/", p))
     flat = re.sub(r"[\"'`\\]", "", text.lower())
     return bool(re.search(r"\.claude|\.git|settings(\.local)?\.json|\.[cg][a-z]{0,6}[*?\[]", flat))
 
