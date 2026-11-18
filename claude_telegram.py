@@ -389,6 +389,8 @@ def remember(sid, d):
     s["cwd"] = d.get("cwd") or s.get("cwd", "")
     s["project"] = project_of(d) or s.get("project", "")
     s["root"] = os.environ.get("CLAUDE_PROJECT_DIR") or s.get("root") or s["cwd"]  # for /new-session
+    if d.get("permission_mode") and not d.get("agent_id"):
+        s["mode"] = d["permission_mode"]  # a subagent's prompt counts as its session's mode
     if d.get("session_title"):
         s["title"] = d["session_title"]
     if not s.get("prompt"):
@@ -1194,6 +1196,8 @@ def wait_answers(cfg, d, questions, stay=False):
     (unless stay: then it waits for Telegram)."""
     loop = in_loop(d)
     hold = loop or stay  # don't hand it back to the terminal when you're at the computer
+    # Look before sending: an answer in the terminal can come before the Telegram message is out.
+    tool = pending_tool(d) if d.get("tool_name") not in (None, "AskUserQuestion") else None
     s = remember(d.get("session_id", ""), d)
     sent = []
     for i, (q_text, labels) in enumerate(questions):
@@ -1205,7 +1209,6 @@ def wait_answers(cfg, d, questions, stay=False):
         sent.append([mid, text, labels, None])
     ensure_poller()
     owner = claude_pid()
-    tool = pending_tool(d) if d.get("tool_name") not in (None, "AskUserQuestion") else None
     while any(x[3] is None for x in sent):
         if answered_in_terminal(tool):
             for mid, text, _, _ in sent:
@@ -1254,6 +1257,12 @@ def hook_ask(d, cfg):
 def hook_permission(d, cfg):
     """PermissionRequest: allow or deny from Telegram. By default always (a prompt can block a session you aren't
     looking at for hours); with permissions_always off, only when you're away or it's a loop."""
+    parent_mode = session(d.get("session_id", "")).get("mode") if d.get("agent_id") else None
+    if cfg.get("auto_allow_in_bypass") and "bypassPermissions" in (d.get("permission_mode"), parent_mode):
+        # You run this session with bypass permissions and chose to also skip the checks Claude Code still makes.
+        log(f"auto-allowed {d.get('tool_name')} in {project_of(d)}: {clip(json.dumps(d.get('tool_input'), ensure_ascii=False), 200)}")
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}))
+        return 0
     always = cfg.get("permissions_always", True)
     if not (always or away(cfg) or in_loop(d)) or project_of(d) in muted_names():
         return 0

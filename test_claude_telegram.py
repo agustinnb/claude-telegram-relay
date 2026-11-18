@@ -666,6 +666,31 @@ class Dialogs(Base):
         self.assertEqual(self.finish(q)[:2], (0, ""))  # no decision: the terminal already made it
         self.wait_for(lambda: any("Answered in the terminal" in e["text"] for e in self.tg.edits()))
 
+    def auto_allow(self):
+        cfg = json.loads((self.home / "config.json").read_text())
+        (self.home / "config.json").write_text(json.dumps({**cfg, "auto_allow_in_bypass": True}))
+
+    def test_bypass_session_prompts_are_allowed_without_asking_when_enabled(self):
+        self.auto_allow()
+        code, out, _ = self.hook("permission", {**BASE, "permission_mode": "bypassPermissions", "tool_name": "Bash",
+                                                "tool_input": {"command": "rm -rf dist"}})
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
+        self.assertFalse(self.tg.sent())
+
+    def test_subagents_of_a_bypass_session_are_allowed_too(self):
+        self.auto_allow()
+        self.hook("prompt", {**BASE, "permission_mode": "bypassPermissions", "prompt": "build it"})
+        code, out, _ = self.hook("permission", {**BASE, "agent_id": "bg1", "permission_mode": "default", "tool_name": "Bash",
+                                                "tool_input": {"command": "rm tmp.txt"}})
+        self.assertEqual(json.loads(out)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
+
+    def test_bypass_prompts_still_ask_when_not_enabled(self):
+        q = self.hook("permission", {**BASE, "permission_mode": "bypassPermissions", "tool_name": "Bash",
+                                     "tool_input": {"command": "rm -rf dist"}}, background=True)
+        self.wait_for(lambda: self.tg.find("rm -rf dist"))
+        self.tg.push(tap(self.tg.find("rm -rf dist")[0]["_mid"], 1))
+        self.finish(q)
+
     def test_permissions_can_stay_in_the_terminal_when_present(self):
         cfg = json.loads((self.home / "config.json").read_text())
         (self.home / "config.json").write_text(json.dumps({**cfg, "permissions_always": False}))
