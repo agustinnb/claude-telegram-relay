@@ -622,6 +622,29 @@ class Loops(Base):
         self.assertIn("check the deploy", loops[0]["text"])
         self.assertFalse(self.tg.find("Question"))  # a session with a loop isn't waiting on you
 
+    def loop_made(self, days_ago):
+        t = self.home / "loop.jsonl"
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - days_ago * 86400))
+        t.write_text(json.dumps({"timestamp": ts, "message": {"content": [{"type": "tool_result", "content":
+                     "Scheduled recurring job c1 (*/5 * * * *). Auto-expires after 7 days."}]}}) + "\n")
+        cron = {"id": "c1", "schedule": "*/5 * * * *", "recurring": True, "prompt": "check the deploy"}
+        self.hook("stop", stop({**BASE, "transcript_path": str(t)}, "", [cron]), background=True)
+        self.wait_for(self.listening("s1"))
+
+    def test_loop_about_to_expire_is_announced_once(self):
+        self.loop_made(6.5)  # Claude Code ends recurring loops 7 days after they were made
+        self.wait_for(lambda: self.tg.find("Loop expires"))
+        time.sleep(1)
+        warn = self.tg.find("Loop expires")
+        self.assertEqual(len(warn), 1)
+        self.assertIn("check the deploy", warn[0]["text"])
+        self.assertEqual(self.state("msgs", str(warn[0]["_mid"])).read_text(), "s1")  # a reply asks the session to renew it
+
+    def test_young_loop_is_not_announced(self):
+        self.loop_made(2)
+        time.sleep(1.5)
+        self.assertFalse(self.tg.find("Loop expires"))
+
     def test_loop_iteration_does_not_count_as_presence(self):
         cron = {"id": "c1", "schedule": "*/5 * * * *", "recurring": True, "prompt": "check the deploy"}
         self.hook("stop", stop(BASE, "", [cron]), background=True)

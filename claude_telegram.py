@@ -10,6 +10,7 @@ Standard library only. Works on macOS, Linux and Windows (hooks run through sh: 
     python3 claude_telegram.py uninstall [--settings PATH ...]
     python3 claude_telegram.py test            # send a test message
 """
+import calendar
 import hashlib
 import json
 import os
@@ -983,6 +984,39 @@ def projects(cfg, only=""):
     send(cfg, "\n".join(lines), code=names, markup=markup)
 
 
+LOOP_LIFE = 7 * 86400  # Claude Code ends a recurring loop 7 days after it was made
+
+
+def loop_made_at(path, job):
+    """When CronCreate made this loop, from the transcript; now if we can't tell."""
+    needle = f"Scheduled recurring job {job} ".encode()
+    try:
+        with open(path, "rb") as f:
+            for line in f:
+                if needle in line:
+                    ts = json.loads(line).get("timestamp", "")
+                    return calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (OSError, ValueError):
+        pass
+    return time.time()
+
+
+def loop_alerts(cfg, sid, s):
+    """A day before a recurring loop expires, and when it does: reply to the alert to have the session renew it."""
+    for job, loop in (s.get("loops") or {}).items():
+        left = loop["since"] + LOOP_LIFE - time.time()
+        for stage, due, title in (("warned", left < 86400, "Loop expires"), ("expired", left <= 0, "Loop expired")):
+            if due and not loop.get(stage):
+                loop[stage] = True
+                fresh = session(sid)  # a hook may have written it meanwhile
+                if job in (fresh.get("loops") or {}):
+                    fresh["loops"][job][stage] = True
+                    save_session(sid, fresh)
+                end = time.strftime("%a %d %b %H:%M", time.localtime(loop["since"] + LOOP_LIFE))
+                said(cfg, sid, f"{header(s, title)}\n\nPrompt: {clip(loop.get('prompt'), 300)}\nEnds: {end} "
+                               f"(Claude Code stops recurring loops after 7 days)\n\nReply to this message to have the session renew it.")
+
+
 def housekeeping(cfg):
     """Send what sessions left for us when the moment is right; tidy up old state."""
     muted = muted_names()
@@ -994,6 +1028,8 @@ def housekeeping(cfg):
             continue
         if (STATE / "listening" / f"{sid}.start").exists() and not alive(s.get("pid")):
             rm(STATE / "listening" / f"{sid}.start")  # its claude is gone (closed window, crash): the listener leaves
+        if not s.get("ended") and alive(s.get("pid")) and s.get("project") not in muted:
+            loop_alerts(cfg, sid, s)
         notes_path = STATE / "notes" / f"{sid}.json"
         n = load(notes_path, {}) or {}
         before = dict(n)
@@ -1049,10 +1085,11 @@ def poll_main():
         return 0
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     last_busy = time.time()
+    code = os.path.getmtime(__file__)
     try:
         while True:
-            if not lead():
-                return 0  # someone else took over
+            if not lead() or os.path.getmtime(__file__) != code:
+                return 0  # someone else took over, or an update: listen.sh starts the new code
             cfg = config()
             try:
                 offset = load(STATE / "offset.json", 0) or 0
@@ -1129,6 +1166,9 @@ def hook_stop(d, cfg):
             if mid:
                 write(STATE / "msgs" / str(mid), sid)
     s["crons"] = [c.get("prompt") for c in crons]
+    old = s.get("loops") or {}
+    s["loops"] = {c["id"]: old.get(c["id"]) or {"prompt": c.get("prompt"), "since": loop_made_at(d.get("transcript_path"), c["id"])}
+                  for c in crons if c.get("recurring") and c.get("id")}
 
     now = time.time()
     s["question"] = None

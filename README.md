@@ -27,7 +27,7 @@ It's one Python file (standard library only) plus two tiny shell scripts, instal
 | **Multiple-choice questions** (`AskUserQuestion`) | Each option becomes a button. You can also reply with your own text, or `1,3` when several options are allowed. |
 | **Permission prompts** | *Allow* / *Deny* buttons. Replying with text denies the action and tells Claude why. |
 | **Errors** | A message when a session stops on an API error (rate limit, overload, server error), so it doesn't sit there silently. |
-| **Loops** | A message when a session starts a `/loop` (or a `CronCreate` / `ScheduleWakeup` schedule). |
+| **Loops** | A message when a session starts a `/loop` (or a `CronCreate` / `ScheduleWakeup` schedule), and a warning a day before a recurring loop reaches Claude Code's 7-day limit. |
 | **Talk to any session** | `@project message` sends a message to a session even when it isn't waiting. Its answer comes back to Telegram. Or just write without `@` and Claude Haiku works out which session you mean. |
 | **Slash commands** | `@project /compact` (or any `/command`) is typed into that session's terminal when it runs inside [Orca](https://github.com/stablyai/orca) or tmux. |
 | **Find your sessions** | `/projects` lists every open project with what each session is doing. `/sessions @project` lists the sessions of one project. |
@@ -161,6 +161,8 @@ Spanish aliases work too: `/proyectos`, `/sesiones`, `/estado`, `/lejos`, `/vuel
 ### Loops
 
 Nobody watches a loop's terminal, so in a session that runs a loop, `AskUserQuestion` dialogs (like permission prompts) always go to Telegram, even when you're at the computer, and wait there for your answer. This also covers the prompts Claude Code still shows in *bypass permissions* mode, and prompts raised by subagents. The message starts with *Loop paused*.
+
+Claude Code stops a recurring loop 7 days after it was created, even across `--resume`. A day before, you get *Loop expires* with the end time, and *Loop expired* when it ends. Reply to either one to ask the session to schedule it again.
 
 ### Several computers
 
