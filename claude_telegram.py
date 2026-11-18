@@ -1308,10 +1308,12 @@ def touches_protected(tool_input):
     text = json.dumps(tool_input, ensure_ascii=False)  # the text written into a file isn't a path
     for key in ("file_path", "path", "notebook_path"):
         if isinstance(tool_input.get(key), str):
-            text += " " + os.path.realpath(os.path.expanduser(tool_input[key]))
+            raw = tool_input[key].replace("\\", "/")
+            text = text.replace(json.dumps(tool_input[key], ensure_ascii=False)[1:-1], "")
+            for p in (raw, os.path.realpath(os.path.expanduser(tool_input[key])).replace("\\", "/")):
+                p = p.lower()  # memory notes and agent worktrees live under .claude but control nothing
+                text += " " + (p if "/.." in p else re.sub(r"\.claude/(projects|worktrees)/", "/", p))
     flat = re.sub(r"[\"'`\\]", "", text.lower())
-    if "/.." not in flat:  # memory notes and agent worktrees live under .claude but control nothing
-        flat = re.sub(r"\.claude/(projects|worktrees)/", "/", flat)
     return bool(re.search(r"\.claude|\.git|settings(\.local)?\.json|\.[cg][a-z]{0,6}[*?\[]", flat))
 
 
