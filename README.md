@@ -31,6 +31,7 @@ It's one Python file (standard library only) plus two tiny shell scripts, instal
 | **Talk to any session** | `@project message` sends a message to a session even when it isn't waiting. Its answer comes back to Telegram. Or just write without `@` and Claude Haiku works out which session you mean. |
 | **Slash commands** | `@project /compact` (or any `/command`) is typed into that session's terminal when it runs inside [Orca](https://github.com/stablyai/orca) or tmux. |
 | **Find your sessions** | `/projects` lists every open project with what each session is doing. `/sessions @project` lists the sessions of one project. |
+| **Photos and files** | Send a screenshot or a file with a caption and the session gets it. |
 | **Mute** | `/mute <project>` silences a project. |
 
 A question looks like this in Telegram:
@@ -124,6 +125,10 @@ You're always told which session got your message. If that session is busy, the 
 - something for one project when you don't remember its name: `@general ask the one doing the invoices whether the export is done`
 
 It answers you in Telegram and shows the message it wants to send to each session, with *Send* / *Cancel* buttons: nothing is sent until you tap *Send*. That's on purpose: what the sessions wrote is part of what the orchestrator reads, and text a session picked up (a web page, a file) could try to steer it. Reply to its answer to keep talking to it. It has no tools and never sends `/commands`. It runs `claude -p --model sonnet`.
+
+### Photos and files
+
+Send a photo, a file, a voice note or a video to the bot, with your message as the caption: `@my-app what's wrong in this screenshot?`. The bridge saves it in `~/.claude-telegram/files` (readable only by you, deleted after a week) and the session gets your message with the file's path, so Claude can open it (it can look at images). It's routed like any message: `@project` in the caption, a reply to one of the session's messages, or the router. Telegram lets bots download files up to 20 MB.
 
 ### Opening a new session
 

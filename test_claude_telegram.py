@@ -1,6 +1,7 @@
 """End-to-end tests: real hooks (through run.sh, as Claude Code runs them) against a fake Telegram API.
 Run: python3 test_claude_telegram.py   (Windows: needs Git for Windows' sh)"""
 import json
+import re
 import os
 import shutil
 import signal
@@ -40,10 +41,19 @@ class FakeTelegram:
                     elif method == "getUpdates":
                         off = body.get("offset", 0)
                         result = [u for u in fake.updates if u["update_id"] >= off]
+                    elif method == "getFile":
+                        result = {"file_id": body["file_id"], "file_path": f"docs/{body['file_id']}.bin"}
                     elif method == "getMe":
                         result = {"username": "test_bot", "supports_inline_queries": fake.inline}
                     fake.calls.append((method, body))
                 data = json.dumps({"ok": True, "result": result}).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):  # file downloads: /file/bot<token>/<file_path>
+                data = b"FILE:" + self.path.rsplit("/", 1)[-1].encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -429,6 +439,30 @@ class Messages(Base):
         self.wait_for(lambda: self.tg.find("not sent"))
         time.sleep(1)
         self.assertIsNone(p.poll())
+
+    def test_photo_with_a_caption_reaches_the_session_as_a_file(self):
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push({"message": {"chat": {"id": CHAT}, "from": {"id": CHAT}, "caption": "@shop what's wrong in this screenshot?",
+                                  "photo": [{"file_id": "small", "file_size": 10}, {"file_id": "big", "file_size": 900}]}})
+        code, _, err = self.finish(p)
+        self.assertEqual(code, 2)
+        self.assertIn("what's wrong in this screenshot?", err)
+        path = re.search(r"(/\S+|[A-Z]:\\\S+)big\.jpg", err).group(0)  # the largest size
+        self.assertEqual(Path(path).read_bytes(), b"FILE:big.bin")
+
+    def test_document_reply_goes_to_that_session_with_its_name(self):
+        p = self.hook("stop", stop(BASE, "Which CSV should I import?"), background=True)
+        self.go_away()
+        self.wait_for(lambda: self.tg.find("Which CSV"))
+        q = self.tg.find("Which CSV")[0]
+        self.tg.push({"message": {"chat": {"id": CHAT}, "from": {"id": CHAT}, "reply_to_message": {"message_id": q["_mid"], "text": q["text"]},
+                                  "document": {"file_id": "d1", "file_name": "../../clientes nov.csv", "file_size": 50}}})
+        code, _, err = self.finish(p)
+        self.assertEqual(code, 2)
+        path = re.search(r"\S*clientes_nov\.csv", err).group(0)
+        self.assertNotIn("..", path)  # the name can't climb out of the files folder
+        self.assertEqual(Path(path).read_bytes(), b"FILE:d1.bin")
 
     def test_router_picks_the_session(self):
         self.env["FAKE_ROUTE"] = json.dumps({"session": "s2"})

@@ -808,6 +808,44 @@ def confirm_relay(cfg, mid, r, choice):
     edit(cfg, mid, r["text"] + "\n\n— Sent.")
 
 
+FILES = HOME / "files"
+MAX_FILE = 20 * 1024 * 1024  # the most a bot can download
+
+
+def save_attachment(cfg, m):
+    """Download a photo, document, voice note or video sent to the bot into ~/.claude-telegram/files.
+    Returns the saved path, or None when the message has no file."""
+    if m.get("photo"):
+        f, name = m["photo"][-1], "photo.jpg"  # the last size is the largest
+    else:
+        kind = next((k for k in ("document", "video", "audio", "voice", "animation", "video_note") if m.get(k)), None)
+        if not kind:
+            return None
+        f = m[kind]
+        name = f.get("file_name") or {"voice": "voice.ogg", "video_note": "video.mp4", "video": "video.mp4",
+                                       "animation": "animation.mp4", "audio": "audio.mp3"}.get(kind, "file")
+    if (f.get("file_size") or 0) > MAX_FILE:
+        send(cfg, "That file is bigger than the 20 MB a Telegram bot can download. Send a smaller one or a link.")
+        return None
+    safe = re.sub(r"[^\w.-]", "_", Path(name).name).lstrip(".") or "file"  # no folders, no hidden or ../ names
+    if name == "photo.jpg":
+        safe = re.sub(r"[^\w-]", "_", f["file_id"][-12:]) + ".jpg"
+    try:
+        info = tg(cfg["token"], "getFile", file_id=f["file_id"])
+        with urllib.request.urlopen(f"{API}/file/bot{cfg['token']}/{info['file_path']}", timeout=120) as r:
+            data = r.read(MAX_FILE + 1)
+    except Exception as e:
+        log(f"file download failed: {e}")
+        send(cfg, "I couldn't download that file from Telegram. Try again.")
+        return None
+    mkdirs(FILES)
+    path = FILES / f"{time.strftime('%Y%m%d-%H%M%S')}-{safe}"
+    fd = os.open(path, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "wb") as out:
+        out.write(data[:MAX_FILE])
+    return str(path)
+
+
 def dispatch(cfg, update):
     if update.get("inline_query"):  # typing after a fill-in button: nothing to show, stop the spinner
         try:
@@ -829,7 +867,10 @@ def dispatch(cfg, update):
     m = update.get("message") or {}
     if not from_owner(cfg, m.get("chat"), m.get("from")):
         return
-    text = (m.get("text") or "").strip()
+    text = (m.get("text") or m.get("caption") or "").strip()
+    attached = save_attachment(cfg, m)
+    if attached:  # a photo or file: the session gets its path, Claude can open it
+        text = (text + "\n\n" if text else "") + f"[File sent from Telegram, saved at: {attached}]"
     me = "@" + (bot_me(cfg).get("username") or "\0")
     if text.lower().startswith(me.lower() + " "):  # a fill-in button puts the bot's name first
         text = text[len(me):].strip()
@@ -987,6 +1028,9 @@ def housekeeping(cfg):
                 send(cfg, f"{header(s, 'Stopped by an error')}\n\n{clip(f['text'], 1500)}\n\nOpen the session to continue it.")
         if n != before:
             save(notes_path, n)
+    for p in list(FILES.glob("*")) if FILES.exists() else []:  # files you sent: kept a week
+        if (age(p) or 0) > 7 * 86400:
+            rm(p)
     for d in ("msgs", "routes", "inbox", "pending"):
         for p in (STATE / d).glob("*"):
             if (age(p) or 0) > 7 * 86400:
