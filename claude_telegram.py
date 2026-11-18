@@ -547,12 +547,12 @@ def new_session(cfg, text):
         known = [s.get("root") or s.get("cwd") for s in sessions.values()]
         if in_orca:  # every Orca workspace, also projects with no session open now
             try:
-                out = json.loads(subprocess.run(orca_cmd("worktree", "list", "--json"), capture_output=True, text=True, timeout=20).stdout)
+                out = json.loads(subprocess.run(orca_cmd("worktree", "list", "--json"), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20).stdout)
                 known += [w["path"] for w in out["result"]["worktrees"] if not w.get("isArchived")]
             except Exception as e:
                 log(f"orca worktree list failed: {e}")
         # one folder can come as C:\\x and C:/x (Windows), or with a trailing slash
-        known = list({os.path.normcase(os.path.normpath(r)): os.path.normpath(r) for r in known if r}.values())
+        known = list({os.path.normcase(os.path.normpath(r)): r for r in known if r}.values())
         exact = [r for r in known if Path(r).name.lower() == name]
         roots = exact or [r for r in known if name in Path(r).name.lower()]
     if len(roots) != 1:
@@ -568,7 +568,7 @@ def new_session(cfg, text):
             where = "id:global-floating-terminal" if floating else f"path:{root}"
             r = subprocess.run(orca_cmd("agent", "launch", "--agent", "claude", "--worktree", where,
                                         "--surface", "terminal", "--prompt", prompt, "--json"),
-                               capture_output=True, text=True, timeout=60)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
             try:
                 out = json.loads(r.stdout)
             except ValueError:
@@ -716,7 +716,8 @@ def session_list(sessions, n=300):
 
 
 def ask_claude(prompt, sessions, model):
-    """Run `claude -p` with no tools and return the JSON object it answers with, or None."""
+    """Run `claude -p` with no tools and return the JSON object it answers with, or None.
+    Its output is UTF-8: say so, or Windows reads it with its old code page and breaks every accent."""
     exe = os.environ.get("CLAUDE_TELEGRAM_CLAUDE") or shutil.which("claude") or "claude"
     cmd = ([sys.executable] if exe.endswith(".py") else []) + [  # .py: a stand-in used by the tests
         exe, "-p", "--model", model, "--tools", "", "--no-session-persistence", "--strict-mcp-config",
@@ -730,7 +731,7 @@ def ask_claude(prompt, sessions, model):
         if d:
             env["CLAUDE_CONFIG_DIR"] = d
         try:
-            out = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=300, cwd=str(HOME),
+            out = json.loads(subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, cwd=str(HOME),
                                             stdin=subprocess.DEVNULL, env=env).stdout)
             if out.get("is_error"):
                 log(f"claude -p failed with profile {d or 'default'}: {clip(out.get('result'), 200)}")
@@ -1312,7 +1313,12 @@ def run_hook(event):
     if not (cfg.get("token") and cfg.get("chat_id")):
         return 0  # not set up yet: stay out of the way
     hooks = {"stop": hook_stop, "failure": hook_failure, "ask": hook_ask, "permission": hook_permission}
-    return hooks.get(event, lambda *_: 0)(d, cfg)
+    try:
+        return hooks.get(event, lambda *_: 0)(d, cfg)
+    except Exception:  # async hooks have nowhere to show an error: keep it where you can find it
+        import traceback
+        log(f"hook {event} failed:\n{traceback.format_exc()}")
+        return 0
 
 
 # ---------- install ----------

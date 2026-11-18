@@ -95,11 +95,12 @@ class Base(unittest.TestCase):
         (self.home / "open_terminal.py").write_text(
             "import json, sys, os\nopen(os.path.join(os.path.dirname(__file__), 'opened.log'), 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n")
         router = self.home / "router.py"
-        router.write_text("import json, os\n"
+        router.write_text("import json, os, sys\nsys.stdout.reconfigure(encoding='utf-8')\n"
                           "good = os.environ.get('FAKE_LOGGED_IN_CONFIG')\n"  # a Claude login that only works in one profile
                           "if good and os.environ.get('CLAUDE_CONFIG_DIR') != good:\n"
                           "    print(json.dumps({'is_error': True, 'result': 'Not logged in'})); raise SystemExit(1)\n"
-                          "print(json.dumps({'result': os.environ.get('FAKE_ROUTE', '{}')}))\n")
+                          # like claude -p: raw UTF-8 on stdout, accents not escaped
+                          "sys.stdout.buffer.write(json.dumps({'result': os.environ.get('FAKE_ROUTE', '{}')}, ensure_ascii=False).encode('utf-8'))\n")
         # Never inherit a real terminal: a test must not type into the Orca or tmux pane it runs in.
         clean = {k: v for k, v in os.environ.items() if not k.startswith(("ORCA_", "TMUX", "CLAUDE_TELEGRAM_", "CLAUDE_PROJECT_DIR"))}
         self.env = {**clean, "CLAUDE_TELEGRAM_HOME": str(self.home), "CLAUDE_TELEGRAM_API": self.tg.url,
@@ -409,6 +410,16 @@ class Messages(Base):
         self.wait_for(lambda: len(self.tg.find("General ·")) == 2)
         self.assertFalse(self.tg.find("don't know which session"))
         self.assertIsNone(p1.poll())
+
+    def test_accents_survive_a_non_utf8_system_encoding(self):
+        # Windows decodes subprocess output with its old code page unless told otherwise
+        self.env.update(PYTHONUTF8="0", LC_ALL="C", LANG="C", PYTHONIOENCODING="")
+        self.env["FAKE_ROUTE"] = json.dumps({"reply": "Está todo listo: sesión ñandú", "send": []}, ensure_ascii=False)
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push(msg("@general ¿cómo va?"))
+        self.wait_for(lambda: self.tg.find("General ·"))
+        self.assertIn("Está todo listo: sesión ñandú", self.tg.find("General ·")[0]["text"])
 
     def test_general_never_relays_commands(self):
         self.env["FAKE_ROUTE"] = json.dumps({"reply": "Done.", "send": [{"session": "s1", "message": "/clear"}]})
