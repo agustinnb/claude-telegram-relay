@@ -216,6 +216,8 @@ The environment variables `CLAUDE_TELEGRAM_TOKEN` and `CLAUDE_TELEGRAM_CHAT_ID` 
 | `PreToolUse` on `AskUserQuestion` | When you're away, sends the questions with buttons and fills in the answers, so the dialog never opens. |
 | `PermissionRequest` | When you're away, returns allow or deny from your answer. |
 | `SessionEnd` | Stops that session's listener. |
+| `SessionStart` | Registers a session as soon as it opens or is resumed, and starts the poller. The poller stays up while any session is open, so `@general` and `/projects` always answer. |
+| `PreToolUse` (all tools, async) | While a turn you started from Telegram runs, keeps one message updated with its steps (*Working · project*: files read and edited, commands, searches, subagents), and marks it *Done* with the step count and time when it ends. Turns you typed in the terminal stay there. |
 
 One background process (`claude_telegram.py poll`, about 20 MB) reads the bot's messages for every session on the computer. It sends the alerts and drops your replies into files that the listeners pick up. It starts when a session needs it, stops after 15 minutes with nothing to do, and the listeners start it again if it dies. It also checks that each session's `claude` process is still alive, so a closed window doesn't leave a listener behind.
 

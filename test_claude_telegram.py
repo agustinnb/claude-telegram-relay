@@ -286,6 +286,15 @@ class Lifecycle(Base):
         self.assertEqual(code, 2)
         self.assertIn("still there?", err)
 
+    def test_opening_a_session_starts_the_poller_and_keeps_it(self):
+        self.hook("start", {**BASE, "source": "resume"})  # Orca restarted: sessions are back but have had no turn yet
+        self.assertEqual(json.loads(self.state("sessions", "s1.json").read_text())["project"], "my-shop")
+        owner = self.state("poller.lock", "owner")
+        self.wait_for(owner.exists)
+        time.sleep(7)  # longer than the poller's idle time: an open session still needs it for @general and /projects
+        self.tg.push(msg("/status"))
+        self.wait_for(lambda: self.tg.find("Open sessions"))
+
     def test_session_end_stops_listening(self):
         p = self.hook("stop", stop(BASE, "Done."), background=True)
         self.wait_for(self.listening("s1"))
@@ -305,6 +314,30 @@ class Messages(Base):
         p = self.hook("stop", stop(BASE, "Checkout works, two tests left."), background=True)
         self.wait_for(lambda: self.tg.find("two tests left"))
         self.assertIn("Reply · my-shop", self.tg.find("two tests left")[0]["text"])
+
+    def test_a_turn_from_telegram_shows_its_steps_as_it_goes(self):
+        p = self.hook("stop", stop(BASE, "Done."), background=True)
+        self.wait_for(self.listening("s1"))
+        self.tg.push(msg("@shop run the tests"))
+        self.finish(p)
+        self.hook("prompt", {**BASE, "prompt": "<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>"})
+        self.hook("tool", {**BASE, "tool_name": "Read", "tool_input": {"file_path": "/work/my-shop/src/cart.ts"}})
+        self.wait_for(lambda: self.tg.find("cart.ts"))
+        status = self.tg.find("cart.ts")[0]
+        self.assertIn("Working · my-shop", status["text"])
+        time.sleep(1.6)  # edits are spaced out so a burst of steps doesn't hit Telegram's rate limit
+        self.hook("tool", {**BASE, "tool_name": "Bash", "tool_input": {"command": "npm test", "description": "Run the tests"}})
+        edits = lambda: [b for m, b in self.tg.calls if m == "editMessageText" and b["message_id"] == status["_mid"]]
+        self.wait_for(lambda: any("Run the tests" in b["text"] and "cart.ts" in b["text"] for b in edits()))
+        self.hook("stop", stop(BASE, "All 12 tests pass."), background=True)
+        self.wait_for(lambda: self.tg.find("All 12 tests pass"))
+        self.wait_for(lambda: any(b["text"].startswith("Done · my-shop") for b in edits()))
+
+    def test_steps_of_turns_you_typed_stay_in_the_terminal(self):
+        self.hook("prompt", {**BASE, "prompt": "refactor the cart"})
+        self.hook("tool", {**BASE, "tool_name": "Read", "tool_input": {"file_path": "/work/my-shop/src/cart.ts"}})
+        time.sleep(0.5)
+        self.assertFalse(self.tg.find("cart.ts"))
 
     def test_at_project_beats_the_only_open_question(self):
         self.go_away()

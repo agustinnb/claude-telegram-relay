@@ -770,6 +770,10 @@ def general(cfg, text, context=""):
               "sessions should get, in the developer's language and voice. Only send what the developer asked for. "
               'Answer with JSON only: {"reply": "<your short answer to the developer, in their language>", '
               '"send": [{"session": "<id>", "message": "<text>"}]}')
+    try:
+        tg(cfg["token"], "sendChatAction", chat_id=cfg["chat_id"], action="typing")  # it takes a few seconds
+    except Exception:
+        pass
     answer = ask_claude(prompt, sessions, "sonnet")
     if not answer:
         send(cfg, "The general orchestrator couldn't run `claude -p` (details in log.txt).")
@@ -1069,7 +1073,7 @@ def housekeeping(cfg):
     for p in list(FILES.glob("*")) if FILES.exists() else []:  # files you sent: kept a week
         if (age(p) or 0) > 7 * 86400:
             rm(p)
-    for d in ("msgs", "routes", "inbox", "pending"):
+    for d in ("msgs", "routes", "inbox", "pending", "progress"):
         for p in (STATE / d).glob("*"):
             if (age(p) or 0) > 7 * 86400:
                 rm(p)
@@ -1078,7 +1082,13 @@ def housekeeping(cfg):
 def busy():
     """Anything that still needs the poller: a listening session, a held dialog, or an unanswered question."""
     return (any(listening(p.name) for p in (STATE / "listening").glob("*") if "." not in p.name)
-            or hook_questions() or (STATE / "away").exists())
+            or hook_questions() or (STATE / "away").exists() or any(open_session(p) for p in (STATE / "sessions").glob("*.json")))
+
+
+def open_session(p):
+    """A Claude session that is still running, so @general, /projects and its messages must keep working."""
+    s = load(p, {}) or {}
+    return bool(s.get("pid")) and not s.get("ended") and alive(s["pid"])
 
 
 def poll_main():
@@ -1140,6 +1150,70 @@ def hook_prompt(d):
     return 0
 
 
+def hook_session_start(d, cfg):
+    """SessionStart: a session opened or came back (Orca restarts resume them all). Register it and start the poller."""
+    sid = safe_id(d.get("session_id", ""))
+    s = remember(sid, d)
+    s["pid"] = claude_pid() or s.get("pid")
+    save_session(sid, s)
+    ensure_poller()
+    return 0
+
+
+def step_text(name, ti):
+    """One short line per tool call, for the live status of a turn you started from Telegram."""
+    f = lambda k: Path(str(ti.get(k) or "")).name
+    todo = next((t.get("activeForm") or t.get("content") for t in ti.get("todos") or [] if t.get("status") == "in_progress"), "")
+    known = {"Bash": ("💻", ti.get("description") or ti.get("command")), "Read": ("📖", f"Read {f('file_path')}"),
+             "Edit": ("✏️", f"Edit {f('file_path')}"), "MultiEdit": ("✏️", f"Edit {f('file_path')}"),
+             "Write": ("✏️", f"Write {f('file_path')}"), "NotebookEdit": ("✏️", f"Edit {f('notebook_path')}"),
+             "Grep": ("🔎", f"Search {ti.get('pattern')}"), "Glob": ("🔎", f"Find {ti.get('pattern')}"),
+             "WebFetch": ("🌐", ti.get("url")), "WebSearch": ("🌐", f"Search the web: {ti.get('query')}"),
+             "Agent": ("🤖", f"Subagent: {ti.get('description')}"), "Task": ("🤖", f"Subagent: {ti.get('description')}"),
+             "TodoWrite": ("📋", todo or "Update the plan"), "Skill": ("🧩", f"Skill {ti.get('skill')}"),
+             "AskUserQuestion": ("❓", "Ask you a question")}
+    icon, text = known.get(name, ("🔧", name.split("__")[-1]))
+    return f"{icon} {clip(' '.join(str(text or name).split()), 90)}"
+
+
+def progress_text(s, p, done=False):
+    steps = p["steps"]
+    head = f"{'Done' if done else 'Working'} · {s.get('project', '?')}"
+    if done:
+        head += f" · {len(steps)} step{'s' * (len(steps) != 1)} · {int(time.time() - p['since']) // 60}m {int(time.time() - p['since']) % 60}s"
+    shown = steps[-15:]
+    more = [f"… {len(steps) - len(shown)} earlier"] if len(steps) > len(shown) else []
+    return "\n".join([head, ""] + more + shown)
+
+
+def hook_tool(d, cfg):
+    """PreToolUse (async, every tool): while a turn you started from Telegram runs, keep one message updated with
+    what it's doing. Turns you typed in the terminal stay there."""
+    sid = safe_id(d.get("session_id", ""))
+    if not (STATE / "tgturn" / sid).exists():
+        return 0
+    s = session(sid)
+    path = STATE / "progress" / f"{sid}.json"
+    p = load(path, None) or {"steps": [], "since": time.time(), "mid": None, "edited": 0}
+    p["steps"].append(step_text(d.get("tool_name", ""), d.get("tool_input") or {}))
+    if not p["mid"]:
+        p["mid"] = said(cfg, sid, progress_text(s, p))
+        p["edited"] = time.time()
+    elif time.time() - p["edited"] > 1.5:  # Telegram limits edits; the Stop hook shows whatever was skipped
+        edit(cfg, p["mid"], progress_text(s, p))
+        p["edited"] = time.time()
+    save(path, p)
+    return 0
+
+
+def finish_progress(cfg, sid, s):
+    path = STATE / "progress" / f"{sid}.json"
+    p = load(path, None)
+    if p and p.get("mid"):
+        edit(cfg, p["mid"], progress_text(s, p, done=True))
+    rm(path)
+
+
 def hook_session_end(d):
     sid = d.get("session_id", "")
     s = session(sid)
@@ -1176,6 +1250,7 @@ def hook_stop(d, cfg):
     s["question"] = None
     if (STATE / "tgturn" / sid).exists():  # you started this turn from Telegram: send the answer back there
         rm(STATE / "tgturn" / sid)
+        finish_progress(cfg, sid, s)
         s["reply"] = {"text": msg, "since": now}
     elif not (crons or d.get("background_tasks")):  # otherwise the session wakes itself up; it isn't waiting on you
         if "?" in msg[-600:] or cfg.get("notify_finished"):
@@ -1402,7 +1477,8 @@ def run_hook(event):
     cfg = config()
     if not (cfg.get("token") and cfg.get("chat_id")):
         return 0  # not set up yet: stay out of the way
-    hooks = {"stop": hook_stop, "failure": hook_failure, "ask": hook_ask, "permission": hook_permission}
+    hooks = {"stop": hook_stop, "failure": hook_failure, "ask": hook_ask, "permission": hook_permission,
+             "start": hook_session_start, "tool": hook_tool}
     try:
         return hooks.get(event, lambda *_: 0)(d, cfg)
     except Exception:  # async hooks have nowhere to show an error: keep it where you can find it
@@ -1430,7 +1506,9 @@ def hook_entries():
         "Stop": [{"hooks": [{"type": "command", "command": cmd("stop"), "asyncRewake": True, "timeout": day}]}],
         "StopFailure": [{"hooks": [{"type": "command", "command": cmd("failure"), "async": True}]}],
         "SessionEnd": [{"hooks": [{"type": "command", "command": cmd("end"), "timeout": 5}]}],
-        "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": cmd("ask"), "timeout": day}]}],
+        "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": cmd("ask"), "timeout": day}]},
+                       {"matcher": "*", "hooks": [{"type": "command", "command": cmd("tool"), "async": True, "timeout": 30}]}],
+        "SessionStart": [{"hooks": [{"type": "command", "command": cmd("start"), "timeout": 10}]}],
         "PermissionRequest": [{"hooks": [{"type": "command", "command": cmd("permission"), "timeout": day}]}],
     }
 
